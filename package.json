@@ -1,0 +1,29 @@
+{
+  "name": "@roberttlange/ask",
+  "version": "0.1.0",
+  "description": "Ask usage questions about installed command-line tools.",
+  "type": "module",
+  "bin": {
+    "ask": "./bin/ask.js"
+  },
+  "main": "./dist/cli/index.js",
+  "exports": {
+    ".": "./dist/cli/index.js"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node scripts/test.js",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "engines": {
+    "node": ">=20.11"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}
