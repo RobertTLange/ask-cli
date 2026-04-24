@@ -19,6 +19,32 @@ interface DiscoveryState {
 }
 
 const localImportDepthLimit = 4;
+const ignoredDirectoryNames = new Set([
+  ".cache",
+  ".git",
+  ".next",
+  ".turbo",
+  ".vite",
+  "build",
+  "coverage",
+  "dist",
+  "node_modules",
+  "out",
+  "target",
+]);
+const ignoredFileExtensions = new Set([
+  ".7z",
+  ".br",
+  ".gif",
+  ".gz",
+  ".jpeg",
+  ".jpg",
+  ".png",
+  ".tar",
+  ".tgz",
+  ".webp",
+  ".zip",
+]);
 
 export async function collectContext(
   resolution: Resolution,
@@ -132,17 +158,21 @@ async function discoverPackageFiles(
       return;
     }
 
-    if (entry.name === ".git" || entry.name === "node_modules" || entry.name === "dist") {
-      continue;
-    }
-
     const path = join(directory, entry.name);
     if (entry.isDirectory()) {
+      if (ignoredDirectoryNames.has(entry.name)) {
+        continue;
+      }
+
       await discoverPackageFiles(state, path, depth + 1);
       continue;
     }
 
     if (!entry.isFile()) {
+      continue;
+    }
+
+    if (isIgnoredPackageFile(entry.name)) {
       continue;
     }
 
@@ -298,6 +328,15 @@ function classifyFile(
   }
 
   return null;
+}
+
+function isIgnoredPackageFile(name: string): boolean {
+  const lowerName = name.toLowerCase();
+  if (ignoredFileExtensions.has(extname(lowerName))) {
+    return true;
+  }
+
+  return lowerName.endsWith(".tar.gz");
 }
 
 function parseSubcommands(help: string): readonly string[] {

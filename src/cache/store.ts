@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ContextBundle, Resolution } from "../types.js";
 
-const collectionCacheVersion = "context-v2";
+const collectionCacheVersion = "context-v3";
 
 export class CacheStore {
   readonly root: string;

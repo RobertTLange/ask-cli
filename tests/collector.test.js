@@ -73,6 +73,42 @@ test("collector includes dist entrypoint and local imports", async () => {
   assertCollectedRelPath(bundle, "dist/pricing-launch.js");
 });
 
+test("collector skips generated directories and package artifacts", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-collector-generated-"));
+  const src = join(temp, "src");
+  const target = join(temp, "target", "debug", ".fingerprint", "dep");
+  await mkdir(src, { recursive: true });
+  await mkdir(target, { recursive: true });
+  const executable = join(temp, "tool");
+  await writeFile(executable, "#!/bin/sh\n");
+  await chmod(executable, 0o755);
+  await writeFile(join(temp, "package.json"), JSON.stringify({ name: "tool", version: "1.0.0" }));
+  await writeFile(join(temp, "README.md"), "docs");
+  await writeFile(join(src, "main.rs"), "fn main() {}\n");
+  await writeFile(join(target, "lib-generated.json"), JSON.stringify({ package: "generated" }));
+  await writeFile(join(temp, "tool-1.0.0.tgz"), "package/package.json");
+
+  const bundle = await collectContext({
+    command: "tool",
+    executablePath: executable,
+    executableRealPath: executable,
+    executableMtimeNs: 1n,
+    ecosystem: "npm",
+    packageName: "tool",
+    version: "1.0.0",
+    packageRoot: temp,
+    entryFile: join(src, "main.rs"),
+    metadataFiles: [],
+    confidence: "high",
+    warnings: [],
+    shim: null,
+  }, defaultLimits, { noExec: true });
+
+  assertCollectedRelPath(bundle, "src/main.rs");
+  assertNoCollectedRelPath(bundle, "target/debug/.fingerprint/dep/lib-generated.json");
+  assertNoCollectedRelPath(bundle, "tool-1.0.0.tgz");
+});
+
 test("collector enforces file count and byte truncation limits", async () => {
   const temp = await mkdtemp(join(tmpdir(), "ask-collector-"));
   await writeFile(join(temp, "README.md"), "x".repeat(100));
@@ -127,5 +163,12 @@ function assertCollectedRelPath(bundle, relPath) {
   assert.ok(
     bundle.files.some((file) => file.relPath === relPath),
     `expected collected file ${relPath}`,
+  );
+}
+
+function assertNoCollectedRelPath(bundle, relPath) {
+  assert.ok(
+    !bundle.files.some((file) => file.relPath === relPath),
+    `expected not to collect file ${relPath}`,
   );
 }
