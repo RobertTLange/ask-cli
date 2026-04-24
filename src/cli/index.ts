@@ -3,7 +3,7 @@ import { ConfigError, loadConfig } from "./config.js";
 import { parseInvocation, UsageError, type ParsedInvocation } from "./args.js";
 import { collectContext } from "../collectors/context.js";
 import { defaultLimits } from "../collectors/limits.js";
-import { AgentError, CodexAgent } from "../agents/codex.js";
+import { AgentError, HeadlessAgent, type HeadlessBackend } from "../agents/headless.js";
 import { NoneAgent } from "../agents/none.js";
 import { buildAgentPrompt } from "../agents/prompt.js";
 import { CacheStore, cacheKeyForResolution } from "../cache/store.js";
@@ -176,14 +176,17 @@ async function runQuestion(
       emitDiagnostic(formatVerbosePrompt(prompt));
     }
 
-    const agent = invocation.config.agent === "none" ? new NoneAgent() : new CodexAgent();
+    const agent = invocation.config.agent === "none"
+      ? new NoneAgent()
+      : new HeadlessAgent(headlessBackend(invocation.config.agent));
     const answer = await collectAgentAnswer(agent.answer({
       workspacePath: staged.path,
       question: invocation.question,
       resolution,
       prompt,
       timeoutMs: invocation.config.agentTimeout * 1_000,
-    }));
+      debug: invocation.config.debug,
+    }), invocation.config.debug ? emitDiagnostic : undefined);
 
     await releaseStaged();
 
@@ -222,6 +225,14 @@ async function runQuestion(
   }
 }
 
+function headlessBackend(agent: ParsedInvocation["config"]["agent"]): HeadlessBackend | undefined {
+  if (agent === "auto" || agent === "none") {
+    return undefined;
+  }
+
+  return agent;
+}
+
 function withBufferedDiagnostics(result: RunResult, diagnostics: string): RunResult {
   if (diagnostics.length === 0) {
     return result;
@@ -233,16 +244,34 @@ function withBufferedDiagnostics(result: RunResult, diagnostics: string): RunRes
   };
 }
 
-async function collectAgentAnswer(events: AsyncIterable<import("../types.js").AgentEvent>): Promise<{
+async function collectAgentAnswer(
+  events: AsyncIterable<import("../types.js").AgentEvent>,
+  emitAgentTrace?: DiagnosticWriter,
+): Promise<{
   readonly text: string;
+  readonly trace: string;
   readonly exitCode: number;
 }> {
   let text = "";
+  let trace = "";
   let exitCode = 0;
+  let traceOpen = false;
+  let lastTraceEndedWithNewline = true;
 
   for await (const event of events) {
     if (event.type === "text") {
       text += event.text;
+    }
+    if (event.type === "agent_trace") {
+      trace += event.text;
+      if (emitAgentTrace) {
+        if (!traceOpen) {
+          emitAgentTrace("----- ask agent trace -----\n");
+          traceOpen = true;
+        }
+        emitAgentTrace(event.text);
+        lastTraceEndedWithNewline = event.text.endsWith("\n");
+      }
     }
     if (event.type === "error" && event.fatal) {
       text += event.message;
@@ -253,7 +282,24 @@ async function collectAgentAnswer(events: AsyncIterable<import("../types.js").Ag
     }
   }
 
-  return { text, exitCode };
+  if (traceOpen && emitAgentTrace) {
+    emitAgentTrace(`${lastTraceEndedWithNewline ? "" : "\n"}----- end ask agent trace -----\n\n`);
+  }
+
+  return { text, trace, exitCode };
+}
+
+function formatAgentTrace(trace: string): string {
+  if (!trace) {
+    return "";
+  }
+
+  return [
+    "----- ask agent trace -----",
+    trace.trimEnd(),
+    "----- end ask agent trace -----",
+    "",
+  ].join("\n");
 }
 
 async function resolveForEcosystem(

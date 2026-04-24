@@ -83,7 +83,7 @@ test("CLI flags override config defaults", () => {
     ["--agent", "none", "--max-files", "20", "tool", "question"],
     {
       ...defaultConfig,
-      agent: "codex",
+      agent: "auto",
       maxFiles: 10,
       maxBytes: 100,
     },
@@ -93,6 +93,23 @@ test("CLI flags override config defaults", () => {
   assert.equal(invocation.config.agent, "none");
   assert.equal(invocation.config.maxFiles, 20);
   assert.equal(invocation.config.maxBytes, 100);
+});
+
+test("default agent uses Headless auto selection", () => {
+  const invocation = parseInvocation(["tool", "question"], { ...defaultConfig });
+
+  assert.equal(invocation.kind, "run");
+  assert.equal(invocation.config.agent, "auto");
+  assert.equal(invocation.config.agentTimeout, 600);
+});
+
+test("parses Headless coding agent names", () => {
+  for (const agent of ["codex", "claude", "cursor", "gemini", "opencode", "pi"]) {
+    const invocation = parseInvocation(["--agent", agent, "tool", "question"], { ...defaultConfig });
+
+    assert.equal(invocation.kind, "run");
+    assert.equal(invocation.config.agent, agent);
+  }
 });
 
 test("loads config from XDG_CONFIG_HOME", async () => {

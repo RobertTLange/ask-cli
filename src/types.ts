@@ -77,10 +77,12 @@ export interface AgentRequest {
   readonly resolution: Resolution;
   readonly prompt: string;
   readonly timeoutMs: number;
+  readonly debug?: boolean;
 }
 
 export type AgentEvent =
   | { readonly type: "text"; readonly text: string }
+  | { readonly type: "agent_trace"; readonly text: string }
   | {
       readonly type: "citation";
       readonly path: string;

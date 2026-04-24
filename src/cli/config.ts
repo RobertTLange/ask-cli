@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { defaultConfig } from "./constants.js";
 
 export type Ecosystem = "auto" | "python" | "npm" | "cargo" | "homebrew" | "fallback";
-export type AgentName = "codex" | "none";
+export type AgentName = "auto" | "codex" | "claude" | "cursor" | "gemini" | "opencode" | "pi" | "none";
 
 export interface CliConfig {
   agent: AgentName;
@@ -27,7 +27,7 @@ export interface CliConfig {
 export interface FileConfig {
   defaults?: Partial<CliConfig>;
   agents?: {
-    codex?: {
+    headless?: {
       path?: string | null;
       extraFlags?: string[];
     };

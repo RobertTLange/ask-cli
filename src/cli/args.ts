@@ -110,7 +110,16 @@ function parseAgent(value: string | boolean | undefined): CliConfig["agent"] | u
     return undefined;
   }
 
-  if (agent === "codex" || agent === "none") {
+  if (
+    agent === "auto" ||
+    agent === "codex" ||
+    agent === "claude" ||
+    agent === "cursor" ||
+    agent === "gemini" ||
+    agent === "opencode" ||
+    agent === "pi" ||
+    agent === "none"
+  ) {
     return agent;
   }
 

@@ -1,4 +1,4 @@
-export const packageName = "@roberttlange/ask";
+export const packageName = "@roberttlange/ask-cli";
 export const packageVersion = "0.1.0";
 
 export const exitCodes = {
@@ -12,7 +12,7 @@ export const exitCodes = {
 } as const;
 
 export const defaultConfig = {
-  agent: "codex",
+  agent: "auto",
   ecosystem: "auto",
   allowHelpExec: true,
   noExec: false,
@@ -23,7 +23,7 @@ export const defaultConfig = {
   refresh: false,
   maxFiles: 200,
   maxBytes: 8_388_608,
-  agentTimeout: 120,
+  agentTimeout: 600,
   packageRoot: undefined,
   executable: undefined,
 } as const;
@@ -44,8 +44,8 @@ Execution control:
   --allow-help-exec             permit help/version subprocesses (default: on)
 
 Agent:
-  --agent <a>                   codex|none (default: codex)
-  --agent-timeout <seconds>     default: 120
+  --agent <a>                   auto|codex|claude|cursor|gemini|opencode|pi|none (default: auto)
+  --agent-timeout <seconds>     default: 600
 
 Output:
   --json                        emit JSON to stdout instead of human output

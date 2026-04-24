@@ -1,17 +1,17 @@
-# ask
+# ask-cli
 
 `ask` answers usage questions about installed command-line tools by resolving the command to local package context, staging a read-only workspace, and asking an agent to answer from that workspace.
 
 ## Install
 
 ```sh
-npm install -g @roberttlange/ask
+npm install -g @roberttlange/ask-cli
 ```
 
 Or run without installing:
 
 ```sh
-npx -y @roberttlange/ask <command> <question>
+npx -y @roberttlange/ask-cli <command> <question>
 ```
 
 ## Usage
@@ -19,10 +19,11 @@ npx -y @roberttlange/ask <command> <question>
 ```sh
 ask <command> <question>
 ask --agent none prettier "How do I ignore generated files?"
+ask --agent claude prettier "How do I ignore generated files?"
 ask --json --agent none fixture-cli-npm "How do I enable json output?"
 ```
 
-`--agent none` stages context and prints the workspace path plus `ASK_CONTEXT.md` without calling Codex.
+By default, `ask` calls `npx -y @roberttlange/headless` and lets Headless choose the first available coding agent. Use `--agent <name>` to pick a Headless backend, or `--agent none` to stage context and print the workspace path plus `ASK_CONTEXT.md` without calling an agent.
 
 ## Flags
 
@@ -31,8 +32,8 @@ ask --json --agent none fixture-cli-npm "How do I enable json output?"
 - `--executable <path>`: override executable path
 - `--no-exec`: skip help/version subprocess collection
 - `--allow-help-exec`: permit help/version collection
-- `--agent <a>`: `codex|none`
-- `--agent-timeout <seconds>`: default `120`
+- `--agent <a>`: `auto|codex|claude|cursor|gemini|opencode|pi|none`
+- `--agent-timeout <seconds>`: default `600`
 - `--json`: emit JSON
 - `--debug`: write trace events to stderr
 - `--verbose`: print the exact prompt sent to the agent to stderr
@@ -56,7 +57,7 @@ ask --json --agent none fixture-cli-npm "How do I enable json output?"
 
 `ask` treats package source, README files, tests, and help output as untrusted data. Subprocess collection uses an allow-list, closed stdin, `shell: false`, restricted environment, byte caps, timeouts, and process-group cleanup. Workspaces copy files instead of symlinking them, redact common secrets, and chmod staged files read-only.
 
-The MVP itself makes no network calls. The Codex adapter runs `codex exec` with the documented read-only sandbox, a staged workspace root, and no `--search` flag. Use `--agent none` to inspect staged context without any agent.
+The MVP itself only makes network calls when npm needs to fetch the Headless package through `npx`. The Headless adapter runs the selected backend with `--allow read-only` and a staged workspace root. Use `--agent none` to inspect staged context without any agent.
 
 ## Limitations
 
