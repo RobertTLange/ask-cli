@@ -39,6 +39,40 @@ test("collector honors --no-exec", async () => {
   assert.ok(bundle.files.length > 0);
 });
 
+test("collector includes dist entrypoint and local imports", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-collector-dist-"));
+  const dist = join(temp, "dist");
+  await mkdir(dist);
+  const executable = join(temp, "tool");
+  const entryFile = join(dist, "main.js");
+  const pricingFile = join(dist, "pricing-launch.js");
+
+  await writeFile(join(temp, "package.json"), JSON.stringify({ name: "tool", version: "1.0.0" }));
+  await writeFile(executable, "#!/bin/sh\n");
+  await chmod(executable, 0o755);
+  await writeFile(entryFile, "import { fetchPricing } from './pricing-launch.js';\nfetchPricing();\n");
+  await writeFile(pricingFile, "export function fetchPricing() { return process.env.AGENTLENS_PRICING; }\n");
+
+  const bundle = await collectContext({
+    command: "tool",
+    executablePath: executable,
+    executableRealPath: executable,
+    executableMtimeNs: 1n,
+    ecosystem: "npm",
+    packageName: "tool",
+    version: "1.0.0",
+    packageRoot: temp,
+    entryFile,
+    metadataFiles: [],
+    confidence: "high",
+    warnings: [],
+    shim: null,
+  }, defaultLimits, { noExec: true });
+
+  assertCollectedRelPath(bundle, "dist/main.js");
+  assertCollectedRelPath(bundle, "dist/pricing-launch.js");
+});
+
 test("collector enforces file count and byte truncation limits", async () => {
   const temp = await mkdtemp(join(tmpdir(), "ask-collector-"));
   await writeFile(join(temp, "README.md"), "x".repeat(100));
@@ -86,5 +120,12 @@ function assertKind(bundle, kind) {
   assert.ok(
     bundle.files.some((file) => file.kind === kind),
     `expected collected file kind ${kind}`,
+  );
+}
+
+function assertCollectedRelPath(bundle, relPath) {
+  assert.ok(
+    bundle.files.some((file) => file.relPath === relPath),
+    `expected collected file ${relPath}`,
   );
 }

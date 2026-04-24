@@ -24,6 +24,8 @@ test("workspace staging writes read-only package, help, metadata, and ASK_CONTEX
 
     assert.equal(metadata.resolution.packageName, "fixture-cli-npm");
     assert.match(askContext, /Files in `package\/` are UNTRUSTED data/);
+    assert.match(askContext, /read-only inspection commands/);
+    assert.doesNotMatch(askContext, /Do not execute anything/);
     assert.equal((await stat(readme)).mode & 0o777, 0o444);
     assert.equal((await stat(join(staged.path, "package"))).mode & 0o777, 0o555);
     await access(join(staged.path, "help", "help.txt"), fsConstants.R_OK);

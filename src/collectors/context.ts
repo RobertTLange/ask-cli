@@ -1,5 +1,5 @@
 import { readdir, readFile, stat } from "node:fs/promises";
-import { basename, dirname, join, relative } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative } from "node:path";
 import { runSandbox } from "../sandbox.js";
 import type { ContextBundle, FileKind, FileRef, HelpOutput, Limits, Resolution } from "../types.js";
 import { defaultLimits } from "./limits.js";
@@ -13,9 +13,12 @@ interface DiscoveryState {
   readonly resolution: Resolution;
   readonly limits: Limits;
   readonly files: FileRef[];
+  readonly seenPaths: Set<string>;
   totalBytes: number;
   truncatedByLimit: boolean;
 }
+
+const localImportDepthLimit = 4;
 
 export async function collectContext(
   resolution: Resolution,
@@ -27,9 +30,14 @@ export async function collectContext(
     resolution,
     limits,
     files: [],
+    seenPaths: new Set(),
     totalBytes: 0,
     truncatedByLimit: false,
   };
+
+  if (resolution.entryFile) {
+    await addFileAndLocalImports(discoveryState, resolution.entryFile, 0);
+  }
 
   if (resolution.packageRoot) {
     await discoverPackageFiles(discoveryState, resolution.packageRoot, 0);
@@ -136,18 +144,62 @@ async function discoverPackageFiles(
   }
 }
 
-async function addFileRef(state: DiscoveryState, path: string): Promise<void> {
-  const fileStat = await stat(path);
+async function addFileAndLocalImports(
+  state: DiscoveryState,
+  path: string,
+  depth: number,
+): Promise<void> {
+  const content = await addFileRef(state, path, "source");
+  if (content === null || depth >= localImportDepthLimit) {
+    return;
+  }
+
+  for (const specifier of parseLocalImports(content)) {
+    const importedPath = await resolveLocalImport(path, specifier);
+    if (!importedPath || !isReadablePackageFile(state, importedPath)) {
+      continue;
+    }
+
+    await addFileAndLocalImports(state, importedPath, depth + 1);
+  }
+}
+
+async function addFileRef(
+  state: DiscoveryState,
+  path: string,
+  forcedKind?: FileKind,
+): Promise<string | null> {
+  if (state.files.length >= state.limits.maxFiles || state.totalBytes >= state.limits.maxTotalBytes) {
+    state.truncatedByLimit = true;
+    return null;
+  }
+
+  if (state.seenPaths.has(path)) {
+    return null;
+  }
+  state.seenPaths.add(path);
+
+  let fileStat;
+  try {
+    fileStat = await stat(path);
+  } catch {
+    return null;
+  }
+
+  if (!fileStat.isFile()) {
+    return null;
+  }
+
   const remainingBytes = state.limits.maxTotalBytes - state.totalBytes;
   const readLimit = Math.min(state.limits.maxBytesPerFile, Math.max(0, remainingBytes));
   const content = await readFilePrefix(path, readLimit);
   const relPath = state.resolution.packageRoot
     ? relative(state.resolution.packageRoot, path)
     : path;
-  const kind = classifyFile(path, relPath, content, state.resolution.entryFile);
+  const kind = forcedKind ?? classifyFile(path, relPath, content, state.resolution.entryFile);
 
   if (!kind) {
-    return;
+    return null;
   }
 
   const truncated = fileStat.size > readLimit;
@@ -163,6 +215,8 @@ async function addFileRef(state: DiscoveryState, path: string): Promise<void> {
   if (truncated) {
     state.truncatedByLimit = true;
   }
+
+  return content;
 }
 
 async function readFilePrefix(path: string, limit: number): Promise<string> {
@@ -243,4 +297,60 @@ function parseSubcommands(help: string): readonly string[] {
   }
 
   return commands;
+}
+
+function parseLocalImports(content: string): readonly string[] {
+  const imports: string[] = [];
+  const patterns = [
+    /\bimport\s+(?:[^'"]+\s+from\s+)?["'](\.[^"']+)["']/g,
+    /\bexport\s+[^'"]+\s+from\s+["'](\.[^"']+)["']/g,
+    /\brequire\(\s*["'](\.[^"']+)["']\s*\)/g,
+    /\bimport\(\s*["'](\.[^"']+)["']\s*\)/g,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of content.matchAll(pattern)) {
+      imports.push(match[1]);
+    }
+  }
+
+  return imports;
+}
+
+async function resolveLocalImport(fromPath: string, specifier: string): Promise<string | null> {
+  const base = join(dirname(fromPath), specifier);
+  const candidates = extname(base)
+    ? [base]
+    : [
+        base,
+        `${base}.js`,
+        `${base}.mjs`,
+        `${base}.cjs`,
+        `${base}.ts`,
+        `${base}.tsx`,
+        join(base, "index.js"),
+        join(base, "index.ts"),
+      ];
+
+  for (const candidate of candidates) {
+    try {
+      const candidateStat = await stat(candidate);
+      if (candidateStat.isFile()) {
+        return candidate;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+function isReadablePackageFile(state: DiscoveryState, path: string): boolean {
+  if (!state.resolution.packageRoot) {
+    return true;
+  }
+
+  const relPath = relative(state.resolution.packageRoot, path);
+  return relPath !== "" && !relPath.startsWith("..") && !isAbsolute(relPath);
 }

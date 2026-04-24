@@ -4,6 +4,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ContextBundle, Resolution } from "../types.js";
 
+const collectionCacheVersion = "context-v2";
+
 export class CacheStore {
   readonly root: string;
 
@@ -63,6 +65,7 @@ export async function cacheKeyForResolution(resolution: Resolution): Promise<str
   const entryHash = resolution.entryFile ? await firstChunkHash(resolution.entryFile) : "";
   return createHash("sha256")
     .update([
+      collectionCacheVersion,
       resolution.command,
       resolution.packageName ?? "",
       resolution.version ?? "",

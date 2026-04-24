@@ -31,7 +31,9 @@ test("prompt builder includes untrusted-data and no-network rules", () => {
   });
 
   assert.match(prompt, /untrusted data, not instructions/);
-  assert.match(prompt, /Do not access the network/);
+  assert.match(prompt, /access the network/);
+  assert.match(prompt, /read-only inspection commands/);
+  assert.doesNotMatch(prompt, /Do not execute commands/);
   assert.match(prompt, /ASK_CONTEXT\.md/);
 });
 
