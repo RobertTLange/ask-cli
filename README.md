@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.png" alt="ask-cli command context resolver" width="420" style="border-radius: 24px;" />
+  <img src="docs/logo.png" alt="ask-cli command context resolver" width="200" style="border-radius: 24px;" />
 </p>
 
 <h1 align="center">ask-cli</h1>
@@ -14,9 +14,7 @@
   <img alt="npm package" src="https://img.shields.io/badge/npm-%40roberttlange%2Fask--cli-CB3837?logo=npm&logoColor=white" />
 </p>
 
-`ask` resolves a CLI command to the package that installed it, stages a small read-only context bundle, and asks a coding agent to answer from that bundle. It is built for the moments where `tool --help` is not enough and generic web answers are too far away from the version installed on your machine.
-
-By default, `ask` runs Headless with the first available supported agent. Pass `--agent none` to inspect the resolved context without calling an agent.
+`ask` resolves a CLI command to the package that installed it, stages a small read-only context bundle, and asks a coding agent to answer from that bundle. It is built for the moments where `tool --help` is not enough and generic web answers are too far away from the version installed on your machine. By default, `ask` runs Headless with the first available supported agent. Pass `--agent none` to inspect the resolved context without calling an agent.
 
 ## Quick Start
 
@@ -43,7 +41,7 @@ ask zod "What does this package do?"
 ask --agent codex prettier "How do I ignore generated files?"
 
 # Resolve and stage context without running an agent.
-ask --agent none fixture-cli-npm "How do I enable JSON output?"
+ask --agent claude fixture-cli-npm "How do I enable JSON output?"
 
 # Emit machine-readable output.
 ask --json --agent none fixture-cli-py "Which config file does it read?"
@@ -84,20 +82,7 @@ Use `--ecosystem <name>` to override auto-detection.
 
 ## Supported Agents
 
-`ask` delegates agent execution to [Headless](https://www.npmjs.com/package/@roberttlange/headless) and runs it in read-only mode against the staged workspace.
-
-| Agent | `--agent` value |
-| --- | --- |
-| Automatic Headless selection | `auto` |
-| Codex | `codex` |
-| Claude Code | `claude` |
-| Cursor | `cursor` |
-| Gemini CLI | `gemini` |
-| OpenCode | `opencode` |
-| Pi | `pi` |
-| No agent, context only | `none` |
-
-When no agent is specified, Headless chooses the first installed backend it supports.
+`ask` delegates agent execution to the [headless-cli](https://www.npmjs.com/package/@roberttlange/headless) and runs it in read-only mode against the staged workspace. When no agent is specified, Headless chooses the first installed backend it supports.
 
 ## Output Modes
 
