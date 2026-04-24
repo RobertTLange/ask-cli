@@ -61,6 +61,36 @@ test("verbose prints exact agent prompt to stderr", async () => {
   assert.match(result.stderr, /----- end ask agent prompt -----/);
 });
 
+test("verbose emits prompt through diagnostics before returning", async () => {
+  const diagnostics = [];
+  const runPromise = run([
+    "--verbose",
+    "--agent",
+    "none",
+    "fixture-cli-npm",
+    "How do I enable json output?",
+  ], (text) => diagnostics.push(text));
+
+  await eventually(() => diagnostics.join("").includes("----- ask agent prompt -----"));
+  const result = await runPromise;
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stderr, undefined);
+  assert.match(diagnostics.join(""), /Question:\s+How do I enable json output\?/);
+});
+
+test("verbose is buffered for tests when no diagnostic writer is provided", async () => {
+  const result = await run([
+    "--verbose",
+    "--agent",
+    "none",
+    "fixture-cli-npm",
+    "How do I enable json output?",
+  ]);
+
+  assert.match(result.stderr, /----- ask agent prompt -----/);
+});
+
 test("none agent JSON output follows answer contract", async () => {
   const result = await run([
     "--json",
@@ -135,4 +165,16 @@ exit 2
 `);
   await chmod(codexPath, 0o755);
   return codexPath;
+}
+
+async function eventually(predicate) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 2_000) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  assert.fail("condition was not met before timeout");
 }

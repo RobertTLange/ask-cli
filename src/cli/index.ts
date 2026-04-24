@@ -17,8 +17,10 @@ import { Trace } from "../trace.js";
 import type { Resolution } from "../types.js";
 import { stageWorkspace } from "../workspace/stage.js";
 
+type DiagnosticWriter = (text: string) => void;
+
 export async function main(argv = process.argv.slice(2)): Promise<void> {
-  const result = await run(argv);
+  const result = await run(argv, (text) => process.stderr.write(text));
 
   if (result.stdout) {
     process.stdout.write(result.stdout);
@@ -37,8 +39,17 @@ interface RunResult {
   stderr?: string;
 }
 
-export async function run(argv: string[]): Promise<RunResult> {
+export async function run(argv: string[], diagnosticWriter?: DiagnosticWriter): Promise<RunResult> {
   let config;
+  let bufferedDiagnostics = "";
+  const emitDiagnostic = (text: string): void => {
+    if (diagnosticWriter) {
+      diagnosticWriter(text);
+      return;
+    }
+
+    bufferedDiagnostics += text;
+  };
 
   try {
     config = await loadConfig();
@@ -55,11 +66,11 @@ export async function run(argv: string[]): Promise<RunResult> {
       case "version":
         return { exitCode: exitCodes.success, stdout: `${packageVersion}\n` };
       case "run":
-        return await runQuestion(invocation);
+        return withBufferedDiagnostics(await runQuestion(invocation, emitDiagnostic), bufferedDiagnostics);
     }
   } catch (error) {
     if (error instanceof UsageError) {
-      return {
+      return withBufferedDiagnostics({
         exitCode: exitCodes.usage,
         stderr: [
           `Usage error: ${error.message}`,
@@ -67,18 +78,21 @@ export async function run(argv: string[]): Promise<RunResult> {
           helpText,
           "",
         ].join("\n"),
-      };
+      }, bufferedDiagnostics);
     }
 
     if (error instanceof AskError) {
-      return formatAskError(error);
+      return withBufferedDiagnostics(formatAskError(error), bufferedDiagnostics);
     }
 
     throw error;
   }
 }
 
-async function runQuestion(invocation: ParsedInvocation): Promise<RunResult> {
+async function runQuestion(
+  invocation: ParsedInvocation,
+  emitDiagnostic: DiagnosticWriter,
+): Promise<RunResult> {
   const trace = new Trace();
   const locateStartedAt = performance.now();
   const located = await locateExecutable(invocation.command);
@@ -140,7 +154,9 @@ async function runQuestion(invocation: ParsedInvocation): Promise<RunResult> {
     resolution,
     workspacePath: staged.path,
   });
-  const verboseOutput = invocation.config.verbose ? formatVerbosePrompt(prompt) : "";
+  if (invocation.config.verbose) {
+    emitDiagnostic(formatVerbosePrompt(prompt));
+  }
 
   try {
     const agent = invocation.config.agent === "none" ? new NoneAgent() : new CodexAgent();
@@ -166,7 +182,7 @@ async function runQuestion(invocation: ParsedInvocation): Promise<RunResult> {
       );
     }
 
-    const stderr = formatDiagnosticOutput(verboseOutput, invocation.config.debug ? trace.toDebugString() : "");
+    const stderr = invocation.config.debug ? trace.toDebugString() : undefined;
     return invocation.config.json
       ? jsonAnswer(invocation, resolution, answer.text, staged.path, trace, stderr)
       : {
@@ -195,6 +211,17 @@ async function runQuestion(invocation: ParsedInvocation): Promise<RunResult> {
 
     throw error;
   }
+}
+
+function withBufferedDiagnostics(result: RunResult, diagnostics: string): RunResult {
+  if (diagnostics.length === 0) {
+    return result;
+  }
+
+  return {
+    ...result,
+    stderr: `${diagnostics}${result.stderr ?? ""}`,
+  };
 }
 
 async function collectAgentAnswer(events: AsyncIterable<import("../types.js").AgentEvent>): Promise<{
@@ -288,10 +315,6 @@ function formatVerbosePrompt(prompt: string): string {
   ].join("\n");
 }
 
-function formatDiagnosticOutput(...parts: readonly string[]): string | undefined {
-  const output = parts.filter((part) => part.length > 0).join("");
-  return output.length > 0 ? output : undefined;
-}
 
 function formatAskError(error: AskError): RunResult {
   const label = error.exitCode === exitCodes.agent ? "Agent error" : "Resolution error";
