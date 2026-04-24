@@ -1,4 +1,4 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { open, readdir, readFile, stat } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative } from "node:path";
 import { runSandbox } from "../sandbox.js";
 import type { ContextBundle, FileKind, FileRef, HelpOutput, Limits, Resolution } from "../types.js";
@@ -37,6 +37,12 @@ export async function collectContext(
 
   if (resolution.entryFile) {
     await addFileAndLocalImports(discoveryState, resolution.entryFile, 0);
+  }
+
+  for (const metadataFile of resolution.metadataFiles) {
+    if (isReadablePackageFile(discoveryState, metadataFile)) {
+      await addFileRef(discoveryState, metadataFile, "config");
+    }
   }
 
   if (resolution.packageRoot) {
@@ -220,8 +226,18 @@ async function addFileRef(
 }
 
 async function readFilePrefix(path: string, limit: number): Promise<string> {
-  const buffer = await readFile(path);
-  return buffer.subarray(0, limit).toString("utf8");
+  if (limit <= 0) {
+    return "";
+  }
+
+  const handle = await open(path, "r");
+  try {
+    const buffer = Buffer.alloc(limit);
+    const result = await handle.read(buffer, 0, limit, 0);
+    return buffer.subarray(0, result.bytesRead).toString("utf8");
+  } finally {
+    await handle.close();
+  }
 }
 
 function classifyFile(
@@ -245,6 +261,10 @@ function classifyFile(
     return "changelog";
   }
 
+  if (name === "cargo.toml" || name === "cargo.lock" || name === "install_receipt.json") {
+    return "config";
+  }
+
   if (normalizedRelPath.startsWith(`docs/`) || normalizedRelPath.startsWith(`doc/`)) {
     return "docs";
   }
@@ -255,6 +275,10 @@ function classifyFile(
 
   if (normalizedRelPath.startsWith(`examples/`) || normalizedRelPath.startsWith(`example/`)) {
     return "example";
+  }
+
+  if (name.endsWith(".rs")) {
+    return "source";
   }
 
   if (/\b(argparse|click|typer|fire|commander|yargs|meow|cac)\b/.test(content)) {

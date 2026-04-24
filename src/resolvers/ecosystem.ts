@@ -36,8 +36,16 @@ export function detectEcosystem(
     return { ecosystem: "cargo", ruleMatched: "path:cargo-bin" };
   }
 
+  if (isCargoTargetPath(executableDir)) {
+    return { ecosystem: "cargo", ruleMatched: "path:cargo-target" };
+  }
+
   if (isInsideHomebrew(executableDir)) {
     return { ecosystem: "homebrew", ruleMatched: "path:homebrew" };
+  }
+
+  if (isInsideHomebrewCellar(executableDir)) {
+    return { ecosystem: "homebrew", ruleMatched: "path:homebrew-cellar" };
   }
 
   return { ecosystem: "fallback", ruleMatched: "fallback" };
@@ -67,10 +75,28 @@ function isInsideCargoBin(path: string): boolean {
   return path.includes(`${sep}.cargo${sep}bin`);
 }
 
+function isCargoTargetPath(path: string): boolean {
+  const parts = path.split(sep);
+  const targetIndex = parts.lastIndexOf("target");
+  if (targetIndex === -1 || targetIndex + 1 >= parts.length) {
+    return false;
+  }
+
+  if (parts[targetIndex + 1] === "debug" || parts[targetIndex + 1] === "release") {
+    return true;
+  }
+
+  return targetIndex + 2 < parts.length && (parts[targetIndex + 2] === "debug" || parts[targetIndex + 2] === "release");
+}
+
 function isInsideHomebrew(path: string): boolean {
   return (
     path.startsWith(`${sep}opt${sep}homebrew${sep}`) ||
     path.startsWith(`${sep}usr${sep}local${sep}Cellar${sep}`) ||
     path.startsWith(`${sep}home${sep}linuxbrew${sep}`)
   );
+}
+
+function isInsideHomebrewCellar(path: string): boolean {
+  return path.split(sep).includes("Cellar");
 }

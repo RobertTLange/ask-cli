@@ -1,21 +1,5 @@
 import type { LocatedExecutable, Resolution } from "../types.js";
 
-export function resolveCargoStub(located: LocatedExecutable): Resolution {
-  return stubResolution(
-    located,
-    "cargo",
-    "Cargo source-level resolution is not available in the MVP; using fallback context only",
-  );
-}
-
-export function resolveHomebrewStub(located: LocatedExecutable): Resolution {
-  return stubResolution(
-    located,
-    "homebrew",
-    "Homebrew source-level resolution is not available in the MVP; using fallback context only",
-  );
-}
-
 export function resolveGenericFallback(located: LocatedExecutable): Resolution {
   return stubResolution(
     located,

@@ -9,7 +9,9 @@ import { buildAgentPrompt } from "../agents/prompt.js";
 import { CacheStore, cacheKeyForResolution } from "../cache/store.js";
 import { AskError } from "../errors.js";
 import { detectEcosystem } from "../resolvers/ecosystem.js";
-import { resolveCargoStub, resolveGenericFallback, resolveHomebrewStub } from "../resolvers/fallback.js";
+import { resolveCargoPackage } from "../resolvers/cargo.js";
+import { resolveGenericFallback } from "../resolvers/fallback.js";
+import { resolveHomebrewPackage } from "../resolvers/homebrew.js";
 import { locateExecutable } from "../resolvers/locate.js";
 import { resolveNpmPackage } from "../resolvers/npm.js";
 import { resolvePythonPackage } from "../resolvers/python.js";
@@ -145,20 +147,35 @@ async function runQuestion(
     await cache.setBundle(cacheKey, bundle);
   }
 
-  const staged = await stageWorkspace(bundle, { question: invocation.question });
-  await cache.storeWorkspace(cacheKey, staged.path);
-  await cache.evict(512);
-  const prompt = buildAgentPrompt({
-    command: invocation.command,
-    question: invocation.question,
-    resolution,
-    workspacePath: staged.path,
-  });
-  if (invocation.config.verbose) {
-    emitDiagnostic(formatVerbosePrompt(prompt));
-  }
+  let staged: Awaited<ReturnType<typeof stageWorkspace>> | null = null;
+  let stagedReleased = false;
+  const releaseStaged = async (): Promise<void> => {
+    if (!staged || stagedReleased) {
+      return;
+    }
+
+    stagedReleased = true;
+    if (invocation.config.keepWorkspace) {
+      await staged.release();
+    } else {
+      await staged.cleanup();
+    }
+  };
 
   try {
+    staged = await stageWorkspace(bundle, { question: invocation.question });
+    await cache.storeWorkspace(cacheKey, staged.path);
+    await cache.evict(512);
+    const prompt = buildAgentPrompt({
+      command: invocation.command,
+      question: invocation.question,
+      resolution,
+      workspacePath: staged.path,
+    });
+    if (invocation.config.verbose) {
+      emitDiagnostic(formatVerbosePrompt(prompt));
+    }
+
     const agent = invocation.config.agent === "none" ? new NoneAgent() : new CodexAgent();
     const answer = await collectAgentAnswer(agent.answer({
       workspacePath: staged.path,
@@ -168,11 +185,7 @@ async function runQuestion(
       timeoutMs: invocation.config.agentTimeout * 1_000,
     }));
 
-    if (invocation.config.keepWorkspace) {
-      await staged.release();
-    } else {
-      await staged.cleanup();
-    }
+    await releaseStaged();
 
     if (answer.exitCode !== 0) {
       throw new AgentError(
@@ -194,11 +207,7 @@ async function runQuestion(
           stderr,
         };
   } catch (error) {
-    if (invocation.config.keepWorkspace) {
-      await staged.release();
-    } else {
-      await staged.cleanup();
-    }
+    await releaseStaged();
 
     if (error instanceof AgentError) {
       throw new AskError(
@@ -257,9 +266,9 @@ async function resolveForEcosystem(
     case "npm":
       return resolveNpmPackage(located);
     case "cargo":
-      return resolveCargoStub(located);
+      return resolveCargoPackage(located);
     case "homebrew":
-      return resolveHomebrewStub(located);
+      return resolveHomebrewPackage(located);
     case "fallback":
       return resolveGenericFallback(located);
   }

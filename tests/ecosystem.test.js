@@ -48,6 +48,10 @@ test("ecosystem detects cargo and homebrew paths", () => {
     "cargo",
   );
   assert.equal(
+    detectEcosystem(located({ realPath: "/repo/target/release/tool" })).ruleMatched,
+    "path:cargo-target",
+  );
+  assert.equal(
     detectEcosystem(located({ realPath: "/opt/homebrew/bin/tool" })).ecosystem,
     "homebrew",
   );

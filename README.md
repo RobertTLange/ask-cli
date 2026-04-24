@@ -60,7 +60,7 @@ The MVP itself makes no network calls. The Codex adapter runs `codex exec` with 
 
 ## Limitations
 
-Python and npm CLIs have native MVP resolution. Cargo and Homebrew currently use fallback help/man/version context. Windows, remote package lookup, container sandboxing, answer caching, Go/Homebrew source extraction, and direct HTTP model adapters are outside the MVP.
+Python and npm CLIs have native source-aware resolution. Cargo CLIs resolve local `target` builds and `cargo install` metadata when crate sources are present in the Cargo registry cache. Homebrew CLIs resolve Cellar package metadata, receipts, formula files, and script wrappers when available, but bottled binaries usually do not include upstream application source. Windows, remote package lookup, container sandboxing, answer caching, Go package resolution, and direct HTTP model adapters are outside the MVP.
 
 ## Demo
 
