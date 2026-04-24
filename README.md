@@ -55,7 +55,7 @@ ask --json --agent none fixture-cli-npm "How do I enable json output?"
 
 `ask` treats package source, README files, tests, and help output as untrusted data. Subprocess collection uses an allow-list, closed stdin, `shell: false`, restricted environment, byte caps, timeouts, and process-group cleanup. Workspaces copy files instead of symlinking them, redact common secrets, and chmod staged files read-only.
 
-The MVP makes no network calls. The Codex adapter refuses to run unless it can verify read-only and no-network controls. Use `--agent none` to inspect staged context without any agent.
+The MVP itself makes no network calls. The Codex adapter runs `codex exec` with the documented read-only sandbox, a staged workspace root, and no `--search` flag. Use `--agent none` to inspect staged context without any agent.
 
 ## Limitations
 

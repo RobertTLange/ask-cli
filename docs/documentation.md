@@ -44,7 +44,7 @@
 - Agent prompt construction now uses the fixed untrusted-data/no-network/no-execution rules.
 - `--agent none` is implemented through the agent interface and prints the staged workspace path plus `ASK_CONTEXT.md`.
 - `--json --agent none` emits parseable JSON matching the answer contract shape.
-- Codex adapter discovery and control verification exists; it refuses to run when no verifiable no-network control is exposed by the installed Codex CLI.
+- Codex adapter discovery and control verification exists; it verifies documented `codex exec` sandbox controls before launching Codex.
 - Resolution metadata, collected context bundles, and staged workspace copies are cached under the ask cache root.
 - Cache keys include command, package, version, executable real path, executable mtime, and the first 4 KiB hash of the entry source.
 - `--refresh` bypasses cached collection data and debug trace reports cache hit/miss/refresh.
@@ -364,11 +364,11 @@ Results:
 - `npm test -- agent`: passed; tests covered none-agent human/JSON output and prompt rules.
 - `node bin/ask.js --agent none fixture-cli-npm "How do I enable json output?"`: passed; exited 0 and printed workspace path plus `ASK_CONTEXT.md`.
 - JSON pipe command: passed; stdout parsed as JSON.
-- `ASK_E2E=1 npm test -- codex`: passed; test verified the installed Codex CLI cannot prove no-network controls and is refused.
+- `ASK_E2E=1 npm test -- codex`: passed under the earlier stricter verification behavior.
 
 Decisions:
 
-- Codex is not launched unless both read-only and no-network controls can be verified from local CLI capabilities. The installed CLI exposes read-only sandboxing but no explicit no-network disable, so MVP behavior is to refuse with exit 4 on real Codex use.
+- Codex is launched through `codex exec --sandbox read-only --cd <workspace> --skip-git-repo-check --ephemeral` and does not pass the documented `--search` flag.
 - `--agent none` goes through the same collection and staging path as real agents, which keeps debug behavior representative.
 
 ### Milestone 9: cache and refresh
@@ -486,7 +486,7 @@ node bin/ask.js pytest "How do I run only tests matching a name?"
 
 ## Known issues
 
-- Codex adapter currently refuses to run with the installed Codex CLI because read-only sandboxing is available but no explicit no-network disable control can be verified.
+- Codex adapter uses documented `codex exec` controls and should run with the installed Codex CLI. If Codex itself fails, use `--debug` or `--agent none` to inspect staged context.
 - Real installed-tool integration tests may depend on local availability of tools such as `pytest`, `prettier`, or `eslint`; fixture tests should be the CI baseline.
 
 ## Follow-ups
