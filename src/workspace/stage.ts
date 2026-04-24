@@ -249,6 +249,7 @@ async function removeWorkspace(path: string): Promise<void> {
 
 async function acquireWorkspaceLock(lockPath: string): Promise<() => Promise<void>> {
   const startedAt = Date.now();
+  const staleLockMs = 60_000;
 
   while (true) {
     try {
@@ -257,7 +258,13 @@ async function acquireWorkspaceLock(lockPath: string): Promise<() => Promise<voi
         await rm(lockPath, { recursive: true, force: true });
       };
     } catch (error) {
-      if (Date.now() - startedAt > 5_000) {
+      const lockStat = await stat(lockPath).catch(() => null);
+      if (lockStat && Date.now() - lockStat.mtimeMs > staleLockMs) {
+        await rm(lockPath, { recursive: true, force: true }).catch(() => undefined);
+        continue;
+      }
+
+      if (Date.now() - startedAt > 20_000) {
         throw error;
       }
       await new Promise((resolve) => setTimeout(resolve, 25));

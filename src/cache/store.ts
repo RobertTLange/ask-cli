@@ -105,23 +105,37 @@ async function cacheEntries(root: string): Promise<Array<{
   const result = [];
   for (const entry of entries) {
     const path = join(root, entry.name);
-    const entryStat = await stat(path);
-    result.push({
-      path,
-      sizeBytes: entry.isDirectory() ? await directorySize(path) : Number(entryStat.size),
-      mtimeMs: entryStat.mtimeMs,
-    });
+    try {
+      const entryStat = await stat(path);
+      result.push({
+        path,
+        sizeBytes: entry.isDirectory() ? await directorySize(path) : Number(entryStat.size),
+        mtimeMs: entryStat.mtimeMs,
+      });
+    } catch {
+      // Cache entries may disappear while another ask process evicts or rewrites them.
+    }
   }
   return result;
 }
 
 async function directorySize(path: string): Promise<number> {
-  const entries = await readdir(path, { withFileTypes: true });
+  let entries;
+  try {
+    entries = await readdir(path, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+
   let total = 0;
   for (const entry of entries) {
     const child = join(path, entry.name);
-    const childStat = await stat(child);
-    total += entry.isDirectory() ? await directorySize(child) : Number(childStat.size);
+    try {
+      const childStat = await stat(child);
+      total += entry.isDirectory() ? await directorySize(child) : Number(childStat.size);
+    } catch {
+      // Cache entries may disappear while another ask process evicts or rewrites them.
+    }
   }
   return total;
 }
