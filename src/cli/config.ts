@@ -14,6 +14,7 @@ export interface CliConfig {
   noExec: boolean;
   json: boolean;
   debug: boolean;
+  verbose: boolean;
   keepWorkspace: boolean;
   refresh: boolean;
   maxFiles: number;

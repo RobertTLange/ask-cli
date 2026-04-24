@@ -44,6 +44,23 @@ test("none agent human output prints workspace and ASK_CONTEXT", async () => {
   assert.match(result.stdout, /Package: fixture-cli-npm 0\.1\.0/);
 });
 
+test("verbose prints exact agent prompt to stderr", async () => {
+  const result = await run([
+    "--verbose",
+    "--agent",
+    "none",
+    "fixture-cli-npm",
+    "How do I enable json output?",
+  ]);
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stderr, /----- ask agent prompt -----/);
+  assert.match(result.stderr, /Command:\s+fixture-cli-npm/);
+  assert.match(result.stderr, /Question:\s+How do I enable json output\?/);
+  assert.match(result.stderr, /Rules:/);
+  assert.match(result.stderr, /----- end ask agent prompt -----/);
+});
+
 test("none agent JSON output follows answer contract", async () => {
   const result = await run([
     "--json",
@@ -62,6 +79,21 @@ test("none agent JSON output follows answer contract", async () => {
   assert.ok(Array.isArray(parsed.citations));
   assert.ok(Array.isArray(parsed.uncertainty));
   assert.ok(Array.isArray(parsed.warnings));
+});
+
+test("verbose does not corrupt JSON stdout", async () => {
+  const result = await run([
+    "--json",
+    "--verbose",
+    "--agent",
+    "none",
+    "fixture-cli-npm",
+    "How do I enable json output?",
+  ]);
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stderr, /----- ask agent prompt -----/);
+  assert.equal(JSON.parse(result.stdout).command, "fixture-cli-npm");
 });
 
 test("codex verification accepts documented exec sandbox controls", async () => {

@@ -39,6 +39,7 @@ test("parses documented flags and joins question words", () => {
       "npm",
       "--json",
       "--debug",
+      "--verbose",
       "--keep-workspace",
       "--refresh",
       "--no-exec",
@@ -66,6 +67,7 @@ test("parses documented flags and joins question words", () => {
   assert.equal(invocation.config.ecosystem, "npm");
   assert.equal(invocation.config.json, true);
   assert.equal(invocation.config.debug, true);
+  assert.equal(invocation.config.verbose, true);
   assert.equal(invocation.config.keepWorkspace, true);
   assert.equal(invocation.config.refresh, true);
   assert.equal(invocation.config.noExec, true);
@@ -108,4 +110,10 @@ test("loads config from XDG_CONFIG_HOME", async () => {
   assert.equal(loaded.agent, "none");
   assert.equal(loaded.maxFiles, 7);
   assert.equal(loaded.maxBytes, defaultConfig.maxBytes);
+});
+
+test("help documents verbose prompt output", async () => {
+  const result = await run(["--help"]);
+
+  assert.match(result.stdout, /--verbose\s+print the exact prompt sent to the agent to stderr/);
 });

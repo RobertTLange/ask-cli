@@ -140,6 +140,7 @@ async function runQuestion(invocation: ParsedInvocation): Promise<RunResult> {
     resolution,
     workspacePath: staged.path,
   });
+  const verboseOutput = invocation.config.verbose ? formatVerbosePrompt(prompt) : "";
 
   try {
     const agent = invocation.config.agent === "none" ? new NoneAgent() : new CodexAgent();
@@ -165,9 +166,9 @@ async function runQuestion(invocation: ParsedInvocation): Promise<RunResult> {
       );
     }
 
-    const stderr = invocation.config.debug ? trace.toDebugString() : undefined;
+    const stderr = formatDiagnosticOutput(verboseOutput, invocation.config.debug ? trace.toDebugString() : "");
     return invocation.config.json
-      ? jsonAnswer(invocation, resolution, answer.text, staged.path, trace)
+      ? jsonAnswer(invocation, resolution, answer.text, staged.path, trace, stderr)
       : {
           exitCode: exitCodes.success,
           stdout: [
@@ -256,6 +257,7 @@ function jsonAnswer(
   answer: string,
   workspacePath: string,
   trace: Trace,
+  stderr: string | undefined,
 ): RunResult {
   return {
     exitCode: exitCodes.success,
@@ -273,8 +275,22 @@ function jsonAnswer(
       warnings: resolution.warnings,
       debug: invocation.config.debug ? { trace: trace.events(), workspacePath } : undefined,
     }, null, 2)}\n`,
-    stderr: invocation.config.debug ? trace.toDebugString() : undefined,
+    stderr,
   };
+}
+
+function formatVerbosePrompt(prompt: string): string {
+  return [
+    "----- ask agent prompt -----",
+    prompt.trimEnd(),
+    "----- end ask agent prompt -----",
+    "",
+  ].join("\n");
+}
+
+function formatDiagnosticOutput(...parts: readonly string[]): string | undefined {
+  const output = parts.filter((part) => part.length > 0).join("");
+  return output.length > 0 ? output : undefined;
 }
 
 function formatAskError(error: AskError): RunResult {

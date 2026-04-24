@@ -35,6 +35,7 @@ ask --json --agent none fixture-cli-npm "How do I enable json output?"
 - `--agent-timeout <seconds>`: default `120`
 - `--json`: emit JSON
 - `--debug`: write trace events to stderr
+- `--verbose`: print the exact prompt sent to the agent to stderr
 - `--keep-workspace`: preserve staged workspace
 - `--max-files <n>`: default `200`
 - `--max-bytes <n>`: default `8388608`

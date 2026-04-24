@@ -18,6 +18,7 @@ export const defaultConfig = {
   noExec: false,
   json: false,
   debug: false,
+  verbose: false,
   keepWorkspace: false,
   refresh: false,
   maxFiles: 200,
@@ -49,6 +50,7 @@ Agent:
 Output:
   --json                        emit JSON to stdout instead of human output
   --debug                       write full trace to stderr
+  --verbose                     print the exact prompt sent to the agent to stderr
   --keep-workspace              do not delete the staged workspace on exit
 
 Limits:
