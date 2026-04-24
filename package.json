@@ -1,5 +1,5 @@
 {
-  "name": "@roberttlange/ask",
+  "name": "@roberttlange/ask-cli",
   "version": "0.1.0",
   "description": "Ask usage questions about installed command-line tools.",
   "type": "module",
