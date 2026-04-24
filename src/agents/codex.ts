@@ -26,12 +26,12 @@ export class CodexAgent implements Agent {
       );
     }
 
-    const verification = await verifyCodexControls(codex);
+    const verification = await verifyCodexExecControls(codex);
     if (!verification.ok) {
       throw new AgentError(
         verification.reason,
-        "verify Codex read-only/no-network controls",
-        "run with --agent none or upgrade Codex CLI to a version with verifiable no-network controls",
+        "verify Codex exec controls",
+        "run with --agent none or upgrade Codex CLI to a version with documented exec sandbox controls",
       );
     }
 
@@ -39,7 +39,7 @@ export class CodexAgent implements Agent {
   }
 }
 
-export async function verifyCodexControls(codexPath: string): Promise<
+export async function verifyCodexExecControls(codexPath: string): Promise<
   | { readonly ok: true }
   | { readonly ok: false; readonly reason: string }
 > {
@@ -56,16 +56,15 @@ export async function verifyCodexControls(codexPath: string): Promise<
     return { ok: false, reason: "unable to inspect Codex CLI help output" };
   }
 
-  const hasReadOnly = help.includes("--sandbox <SANDBOX_MODE>") && help.includes("read-only");
-  const hasApprovalNever = help.includes("--ask-for-approval") && help.includes("never");
-  const hasNetworkDisable = /--no-(network|search)|network\s*=\s*false|disable.*network/i.test(help);
+  const hasReadOnlySandbox =
+    /--sandbox(?:, -s|-s, --sandbox)?\s+<[^>]+>/i.test(help) &&
+    help.includes("read-only");
+  const hasWorkspaceRoot = help.includes("--cd") || help.includes("-C");
+  const hasSkipGitRepoCheck = help.includes("--skip-git-repo-check");
+  const hasEphemeral = help.includes("--ephemeral");
 
-  if (!hasReadOnly || !hasApprovalNever) {
-    return { ok: false, reason: "Codex CLI read-only controls could not be verified" };
-  }
-
-  if (!hasNetworkDisable) {
-    return { ok: false, reason: "Codex CLI does not expose a verifiable no-network control" };
+  if (!hasReadOnlySandbox || !hasWorkspaceRoot || !hasSkipGitRepoCheck || !hasEphemeral) {
+    return { ok: false, reason: "Codex CLI exec sandbox controls could not be verified" };
   }
 
   return { ok: true };
@@ -76,12 +75,12 @@ async function* streamCodex(codexPath: string, req: AgentRequest): AsyncIterable
     "exec",
     "--sandbox",
     "read-only",
-    "--ask-for-approval",
-    "never",
     "--cd",
     req.workspacePath,
     "--skip-git-repo-check",
     "--ephemeral",
+    "--color",
+    "never",
     req.prompt,
   ], {
     cwd: req.workspacePath,

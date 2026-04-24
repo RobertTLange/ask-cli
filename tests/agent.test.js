@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { chmod, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { run } from "../dist/cli/index.js";
-import { verifyCodexControls } from "../dist/agents/codex.js";
+import { verifyCodexExecControls } from "../dist/agents/codex.js";
 import { buildAgentPrompt } from "../dist/agents/prompt.js";
-import { findOnPath } from "../dist/resolvers/locate.js";
 
 test("prompt builder includes untrusted-data and no-network rules", () => {
   const prompt = buildAgentPrompt({
@@ -62,15 +64,43 @@ test("none agent JSON output follows answer contract", async () => {
   assert.ok(Array.isArray(parsed.warnings));
 });
 
-test("codex verification refuses unverifiable no-network controls", async () => {
-  const codexPath = process.env.ASK_CODEX_PATH
-    ?? (process.env.ASK_E2E ? await findOnPath("codex", process.env.PATH) : null);
-  if (!codexPath) {
-    assert.ok(true);
-    return;
-  }
+test("codex verification accepts documented exec sandbox controls", async () => {
+  const codexPath = await fakeCodex(`
+Run Codex non-interactively
 
-  const verification = await verifyCodexControls(codexPath);
-  assert.equal(verification.ok, false);
-  assert.match(verification.reason, /no-network|unable to inspect|read-only/);
+Options:
+  -s, --sandbox <SANDBOX_MODE>
+          [possible values: read-only, workspace-write, danger-full-access]
+  -C, --cd <DIR>
+      --skip-git-repo-check
+      --ephemeral
+`);
+
+  const verification = await verifyCodexExecControls(codexPath);
+
+  assert.equal(verification.ok, true);
 });
+
+test("codex verification rejects missing exec sandbox controls", async () => {
+  const codexPath = await fakeCodex("Run Codex non-interactively\n");
+  const verification = await verifyCodexExecControls(codexPath);
+
+  assert.equal(verification.ok, false);
+  assert.match(verification.reason, /sandbox controls/);
+});
+
+async function fakeCodex(helpText) {
+  const temp = await mkdtemp(join(tmpdir(), "ask-fake-codex-"));
+  const codexPath = join(temp, "codex");
+  await writeFile(codexPath, `#!/bin/sh
+if [ "$1" = "exec" ] && [ "$2" = "--help" ]; then
+cat <<'EOF'
+${helpText}
+EOF
+exit 0
+fi
+exit 2
+`);
+  await chmod(codexPath, 0o755);
+  return codexPath;
+}
