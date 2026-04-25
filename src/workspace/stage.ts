@@ -250,6 +250,7 @@ async function removeWorkspace(path: string): Promise<void> {
 async function acquireWorkspaceLock(lockPath: string): Promise<() => Promise<void>> {
   const startedAt = Date.now();
   const staleLockMs = 60_000;
+  await mkdir(dirname(lockPath), { recursive: true });
 
   while (true) {
     try {

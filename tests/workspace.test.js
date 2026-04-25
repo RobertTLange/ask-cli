@@ -43,6 +43,31 @@ test("workspace cleanup removes staged directory", async () => {
   await assert.rejects(access(staged.path, fsConstants.F_OK));
 });
 
+test("workspace staging creates the shared temp root before locking", async () => {
+  const originalTmpdirEnv = {
+    TMPDIR: process.env.TMPDIR,
+    TMP: process.env.TMP,
+    TEMP: process.env.TEMP,
+  };
+  const temp = await mkdtemp(join(tmpdir(), "ask-missing-workspace-root-"));
+  process.env.TMPDIR = temp;
+  process.env.TMP = temp;
+  process.env.TEMP = temp;
+
+  let staged;
+  try {
+    const bundle = await npmFixtureBundle();
+    staged = await stageWorkspace(bundle, { question: "missing root?" });
+
+    await access(staged.path, fsConstants.F_OK);
+  } finally {
+    restoreEnv("TMPDIR", originalTmpdirEnv.TMPDIR);
+    restoreEnv("TMP", originalTmpdirEnv.TMP);
+    restoreEnv("TEMP", originalTmpdirEnv.TEMP);
+    await staged?.cleanup();
+  }
+});
+
 test("workspace skips symlink escapes", async () => {
   const temp = await mkdtemp(join(tmpdir(), "ask-workspace-"));
   const packageRoot = join(temp, "pkg");
@@ -101,4 +126,13 @@ async function npmFixtureBundle() {
     helpTimeoutMs: 1_000,
     helpStdoutBytes: 4_096,
   });
+}
+
+function restoreEnv(name, value) {
+  if (value === undefined) {
+    delete process.env[name];
+    return;
+  }
+
+  process.env[name] = value;
 }
