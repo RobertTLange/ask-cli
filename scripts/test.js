@@ -8,6 +8,7 @@ const testDir = new URL("../tests/", import.meta.url);
 const entries = await readdir(testDir);
 const testFiles = entries
   .filter((entry) => entry.endsWith(".test.js"))
+  .filter((entry) => entry !== "integration-local.test.js")
   .map((entry) => join(testDir.pathname, entry));
 
 const args = ["--test"];

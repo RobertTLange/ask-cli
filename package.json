@@ -18,6 +18,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node scripts/test.js",
+    "test:integration:local": "node --test tests/integration-local.test.js",
+    "hooks:install": "git config core.hooksPath .githooks",
     "prepublishOnly": "npm run build && npm test"
   },
   "engines": {
