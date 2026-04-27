@@ -78,6 +78,8 @@ export interface AgentRequest {
   readonly prompt: string;
   readonly timeoutMs: number;
   readonly debug?: boolean;
+  readonly usage?: boolean;
+  readonly reasoningEffort?: "low" | "medium" | "high" | "xhigh";
 }
 
 export type AgentEvent =

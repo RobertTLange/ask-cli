@@ -19,11 +19,15 @@ export const defaultConfig = {
   json: false,
   debug: false,
   verbose: false,
+  usage: false,
   keepWorkspace: false,
   refresh: false,
   maxFiles: 200,
   maxBytes: 8_388_608,
   agentTimeout: 600,
+  reasoningEffort: undefined,
+  headlessPath: undefined,
+  headlessExtraFlags: [],
   packageRoot: undefined,
   executable: undefined,
 } as const;
@@ -46,10 +50,12 @@ Execution control:
 Agent:
   --agent <a>                   auto|codex|claude|cursor|gemini|opencode|pi|none (default: auto)
   --agent-timeout <seconds>     default: 600
+  --reasoning-effort <level>    low|medium|high|xhigh
 
 Output:
   --json                        emit JSON to stdout instead of human output
   --debug                       write full trace to stderr
+  --usage                       include Headless usage accounting when available
   --verbose                     print the exact prompt sent to the agent to stderr
   --keep-workspace              do not delete the staged workspace on exit
 

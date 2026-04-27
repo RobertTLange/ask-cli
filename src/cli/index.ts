@@ -178,7 +178,10 @@ async function runQuestion(
 
     const agent = invocation.config.agent === "none"
       ? new NoneAgent()
-      : new HeadlessAgent(headlessBackend(invocation.config.agent));
+      : new HeadlessAgent(headlessBackend(invocation.config.agent), {
+          command: invocation.config.headlessPath,
+          extraFlags: invocation.config.headlessExtraFlags,
+        });
     const answer = await collectAgentAnswer(agent.answer({
       workspacePath: staged.path,
       question: invocation.question,
@@ -186,13 +189,16 @@ async function runQuestion(
       prompt,
       timeoutMs: invocation.config.agentTimeout * 1_000,
       debug: invocation.config.debug,
+      usage: invocation.config.usage,
+      reasoningEffort: invocation.config.reasoningEffort,
     }), invocation.config.debug ? emitDiagnostic : undefined);
 
     await releaseStaged();
+    const parsedAnswer = splitUsageAnswer(answer.text, invocation.config.usage);
 
     if (answer.exitCode !== 0) {
       throw new AgentError(
-        answer.text || `agent exited with code ${answer.exitCode}`,
+        parsedAnswer.text || `agent exited with code ${answer.exitCode}`,
         "run agent",
         "run with --debug or --agent none to inspect the staged workspace",
       );
@@ -200,12 +206,13 @@ async function runQuestion(
 
     const stderr = invocation.config.debug ? trace.toDebugString() : undefined;
     return invocation.config.json
-      ? jsonAnswer(invocation, resolution, answer.text, staged.path, trace, stderr)
+      ? jsonAnswer(invocation, resolution, parsedAnswer.text, staged.path, trace, stderr, parsedAnswer.usage)
       : {
           exitCode: exitCodes.success,
           stdout: [
             resolutionSummary(resolution),
-            answer.text,
+            parsedAnswer.text,
+            parsedAnswer.usage ? JSON.stringify({ usage: parsedAnswer.usage }) : "",
           ].join("\n"),
           stderr,
         };
@@ -231,6 +238,49 @@ function headlessBackend(agent: ParsedInvocation["config"]["agent"]): HeadlessBa
   }
 
   return agent;
+}
+
+function splitUsageAnswer(answer: string, usageEnabled: boolean): {
+  readonly text: string;
+  readonly usage?: unknown;
+} {
+  if (!usageEnabled) {
+    return { text: answer };
+  }
+
+  const lines = answer.trimEnd().split(/\r?\n/);
+  let usageLineIndex = -1;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (lines[index].trim().length > 0) {
+      usageLineIndex = index;
+      break;
+    }
+  }
+  if (usageLineIndex === -1) {
+    return { text: answer };
+  }
+
+  try {
+    const parsed = JSON.parse(lines[usageLineIndex]) as unknown;
+    if (!isRecord(parsed) || !Object.hasOwn(parsed, "usage")) {
+      return { text: answer };
+    }
+
+    const answerLines = [
+      ...lines.slice(0, usageLineIndex),
+      ...lines.slice(usageLineIndex + 1),
+    ];
+    return {
+      text: answerLines.join("\n").trimEnd(),
+      usage: parsed.usage,
+    };
+  } catch {
+    return { text: answer };
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function withBufferedDiagnostics(result: RunResult, diagnostics: string): RunResult {
@@ -340,6 +390,7 @@ function jsonAnswer(
   workspacePath: string,
   trace: Trace,
   stderr: string | undefined,
+  usage: unknown,
 ): RunResult {
   return {
     exitCode: exitCodes.success,
@@ -355,6 +406,7 @@ function jsonAnswer(
       citations: [{ path: "ASK_CONTEXT.md", start: 1, end: 1, kind: "context" }],
       uncertainty: [],
       warnings: resolution.warnings,
+      usage,
       debug: invocation.config.debug ? { trace: trace.events(), workspacePath } : undefined,
     }, null, 2)}\n`,
     stderr,

@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import type { Agent, AgentEvent, AgentRequest } from "../types.js";
 
 export type HeadlessBackend = "codex" | "claude" | "cursor" | "gemini" | "opencode" | "pi";
@@ -16,31 +19,67 @@ export class AgentError extends Error {
 }
 
 export class HeadlessAgent implements Agent {
-  constructor(private readonly backend?: HeadlessBackend) {}
+  constructor(
+    private readonly backend?: HeadlessBackend,
+    private readonly options: {
+      readonly command?: string | null;
+      readonly extraFlags?: readonly string[];
+    } = {},
+  ) {}
 
   async *answer(req: AgentRequest): AsyncIterable<AgentEvent> {
-    yield* streamHeadless(this.backend, req);
+    yield* streamHeadless(this.backend, req, this.options);
   }
 }
 
-function headlessArgs(backend: HeadlessBackend | undefined, req: AgentRequest): string[] {
-  return [
-    "-y",
-    "@roberttlange/headless",
+interface HeadlessCommand {
+  readonly command: string;
+  readonly args: string[];
+}
+
+async function createPromptFile(prompt: string): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "ask-headless-prompt-"));
+  const path = join(dir, "prompt.md");
+  await writeFile(path, prompt, "utf8");
+  return path;
+}
+
+async function removePromptFile(path: string): Promise<void> {
+  await rm(dirname(path), { recursive: true, force: true });
+}
+
+function headlessCommand(
+  backend: HeadlessBackend | undefined,
+  req: AgentRequest,
+  options: { readonly command?: string | null; readonly extraFlags?: readonly string[] },
+  promptFile: string,
+): HeadlessCommand {
+  const usesNpx = !options.command;
+  const args = [
+    ...(usesNpx ? ["-y", "@roberttlange/headless"] : []),
     ...(backend ? [backend] : []),
     ...(req.debug ? ["--debug"] : []),
+    ...(req.usage ? ["--usage"] : []),
+    ...(req.reasoningEffort ? ["--reasoning-effort", req.reasoningEffort] : []),
     "--allow",
     "read-only",
     "--work-dir",
     req.workspacePath,
-    "--prompt",
-    req.prompt,
+    "--prompt-file",
+    promptFile,
+    ...(options.extraFlags ?? []),
   ];
+
+  return {
+    command: options.command || "npx",
+    args,
+  };
 }
 
 async function* streamHeadless(
   backend: HeadlessBackend | undefined,
   req: AgentRequest,
+  options: { readonly command?: string | null; readonly extraFlags?: readonly string[] },
 ): AsyncIterable<AgentEvent> {
   type QueueEvent =
     | { readonly type: "agent_trace"; readonly text: string }
@@ -67,7 +106,9 @@ async function* streamHeadless(
     return event;
   };
 
-  const child = spawn("npx", headlessArgs(backend, req), {
+  const promptFile = await createPromptFile(req.prompt);
+  const command = headlessCommand(backend, req, options, promptFile);
+  const child = spawn(command.command, command.args, {
     cwd: req.workspacePath,
     shell: false,
     stdio: ["ignore", "pipe", "pipe"],
@@ -141,6 +182,7 @@ async function* streamHeadless(
   if (timeout) {
     clearTimeout(timeout);
   }
+  await removePromptFile(promptFile);
   if (spawnErrorMessage) {
     yield {
       type: "error",

@@ -32,8 +32,10 @@ const optionSchema = {
   "allow-help-exec": { type: "boolean" },
   agent: { type: "string" },
   "agent-timeout": { type: "string" },
+  "reasoning-effort": { type: "string" },
   json: { type: "boolean" },
   debug: { type: "boolean" },
+  usage: { type: "boolean" },
   verbose: { type: "boolean" },
   "keep-workspace": { type: "boolean" },
   "max-files": { type: "string" },
@@ -94,8 +96,10 @@ function parseCliConfig(values: Record<string, string | boolean | undefined>): P
     noExec: booleanValue(values["no-exec"]),
     allowHelpExec: booleanValue(values["allow-help-exec"]),
     agentTimeout: positiveInteger(values["agent-timeout"], "--agent-timeout"),
+    reasoningEffort: parseReasoningEffort(values["reasoning-effort"]),
     json: booleanValue(values.json),
     debug: booleanValue(values.debug),
+    usage: booleanValue(values.usage),
     verbose: booleanValue(values.verbose),
     keepWorkspace: booleanValue(values["keep-workspace"]),
     maxFiles: positiveInteger(values["max-files"], "--max-files"),
@@ -124,6 +128,19 @@ function parseAgent(value: string | boolean | undefined): CliConfig["agent"] | u
   }
 
   throw new UsageError(`unsupported --agent: ${agent}`);
+}
+
+function parseReasoningEffort(value: string | boolean | undefined): CliConfig["reasoningEffort"] | undefined {
+  const effort = stringValue(value);
+  if (effort === undefined) {
+    return undefined;
+  }
+
+  if (effort === "low" || effort === "medium" || effort === "high" || effort === "xhigh") {
+    return effort;
+  }
+
+  throw new UsageError(`unsupported --reasoning-effort: ${effort}`);
 }
 
 function parseEcosystem(value: string | boolean | undefined): CliConfig["ecosystem"] | undefined {
