@@ -176,6 +176,51 @@ test("rejects Headless extra flags owned by ask", async () => {
   );
 });
 
+test("rejects Headless extra flag aliases that can override ask controls", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-config-"));
+  const askConfigDir = join(temp, "ask");
+  await mkdir(askConfigDir);
+  await writeFile(
+    join(askConfigDir, "config.json"),
+    JSON.stringify({ agents: { headless: { extraFlags: ["-C", "/tmp"] } } }),
+  );
+
+  await assert.rejects(
+    () => loadConfig({ XDG_CONFIG_HOME: temp }, "/unused"),
+    /agents\.headless\.extraFlags cannot include -C/,
+  );
+});
+
+test("rejects internal Headless flags from config defaults", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-config-"));
+  const askConfigDir = join(temp, "ask");
+  await mkdir(askConfigDir);
+  await writeFile(
+    join(askConfigDir, "config.json"),
+    JSON.stringify({ defaults: { headlessExtraFlags: ["--allow", "yolo"] } }),
+  );
+
+  await assert.rejects(
+    () => loadConfig({ XDG_CONFIG_HOME: temp }, "/unused"),
+    /defaults\.headlessExtraFlags is not supported/,
+  );
+});
+
+test("rejects invalid reasoning effort from config defaults", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-config-"));
+  const askConfigDir = join(temp, "ask");
+  await mkdir(askConfigDir);
+  await writeFile(
+    join(askConfigDir, "config.json"),
+    JSON.stringify({ defaults: { reasoningEffort: "extreme" } }),
+  );
+
+  await assert.rejects(
+    () => loadConfig({ XDG_CONFIG_HOME: temp }, "/unused"),
+    /defaults\.reasoningEffort must be one of low, medium, high, xhigh/,
+  );
+});
+
 test("help documents verbose prompt output", async () => {
   const result = await run(["--help"]);
 
