@@ -1,0 +1,48 @@
+#!/bin/sh
+set -u
+
+if [ "${ASK_SKIP_INTEGRATION_HOOK:-}" = "1" ]; then
+  echo "ask pre-push: skipped by ASK_SKIP_INTEGRATION_HOOK=1"
+  exit 0
+fi
+
+hook_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH= cd -- "$hook_dir/.." && pwd)
+ask_bin="$repo_root/bin/ask.js"
+integration_agents="codex"
+
+if [ "${ASK_HOOK_ALL_AGENTS:-}" = "1" ]; then
+  integration_agents="all"
+fi
+
+cd "$repo_root"
+
+echo "ask pre-push: building local CLI"
+if ! npm run build; then
+  cat >&2 <<'EOF'
+ask pre-push: local build failed.
+
+Bypass once with:
+  ASK_SKIP_INTEGRATION_HOOK=1 git push
+EOF
+  exit 1
+fi
+
+echo "ask pre-push: running local integration suite (${integration_agents})"
+if ! ASK_BIN="$ask_bin" ASK_INTEGRATION_AGENTS="$integration_agents" npm run test:integration:local; then
+  cat >&2 <<'EOF'
+ask pre-push: local integration suite failed.
+
+Expected local prerequisites:
+  - Headless installed and on PATH, or ASK_INTEGRATION_HEADLESS_BIN set
+  - Codex installed and authenticated by default
+  - all six Headless backends installed and authenticated when ASK_HOOK_ALL_AGENTS=1
+
+Bypass once with:
+  ASK_SKIP_INTEGRATION_HOOK=1 git push
+
+Run all agents once with:
+  ASK_HOOK_ALL_AGENTS=1 git push
+EOF
+  exit 1
+fi

@@ -58,6 +58,12 @@ ask --no-exec pip "Where does it read configuration?"
 # Print the exact agent prompt for debugging.
 ask --verbose --agent none fixture-cli-npm "How do I enable verbose output?"
 
+# Include Headless token/cost accounting when the backend reports it.
+ask --usage --agent codex prettier "How is config resolved?"
+
+# Request a normalized Headless reasoning effort.
+ask --reasoning-effort high --agent codex cargo-nextest "How do I run one test?"
+
 # Bypass cached context collection.
 ask --refresh cargo-nextest "How do I run one test?"
 ```
@@ -133,8 +139,10 @@ Options:
 - `--allow-help-exec`: permit help/version subprocess collection.
 - `--agent <a>`: one of `auto`, `codex`, `claude`, `cursor`, `gemini`, `opencode`, `pi`, or `none`.
 - `--agent-timeout <seconds>`: agent timeout. Defaults to `600`.
+- `--reasoning-effort <level>`: pass `low`, `medium`, `high`, or `xhigh` to Headless.
 - `--json`: emit JSON to stdout.
 - `--debug`: write full trace output to stderr.
+- `--usage`: include Headless usage accounting when available.
 - `--verbose`: print the exact prompt sent to the agent to stderr.
 - `--keep-workspace`: preserve the staged workspace on exit.
 - `--max-files <n>`: maximum staged file count. Defaults to `200`.
@@ -165,12 +173,22 @@ Example:
     "agent": "codex",
     "ecosystem": "auto",
     "maxFiles": 200,
-    "agentTimeout": 600
+    "agentTimeout": 600,
+    "usage": false,
+    "reasoningEffort": "high"
+  },
+  "agents": {
+    "headless": {
+      "path": "headless",
+      "extraFlags": ["--model", "gpt-5.5"]
+    }
   }
 }
 ```
 
 CLI flags override config defaults.
+
+By default, `ask` runs Headless through `npx -y @roberttlange/headless`. Set `agents.headless.path` to use a locally linked binary, and `agents.headless.extraFlags` for additional Headless options such as a model override.
 
 ## Security Model
 
@@ -196,9 +214,11 @@ Staged workspaces copy files instead of symlinking them, redact common secrets, 
 npm install
 npm run build
 npm test
+npm run test:integration:local
+npm run hooks:install
 ```
 
-`npm test` builds the package and runs the Node test suite. The package exports one binary, `ask`, from `bin/ask.js`.
+`npm test` builds the package and runs the Node test suite. `npm run test:integration:local` runs authenticated local integration coverage through Headless and a real agent; set `ASK_INTEGRATION_AGENTS=codex` to limit it to Codex, or `ASK_INTEGRATION_AGENTS=all` to run every supported backend. After `npm run hooks:install`, the pre-push hook builds the local CLI and runs Codex integration by default; set `ASK_HOOK_ALL_AGENTS=1` to run all agents, or `ASK_SKIP_INTEGRATION_HOOK=1` to bypass once. Set `ASK_INTEGRATION_HEADLESS_BIN=/path/to/headless` to test against a specific Headless binary and `ASK_INTEGRATION_TIMEOUT_MS=300000` to adjust per-command timeout. The package exports one binary, `ask`, from `bin/ask.js`.
 
 ## Layout
 

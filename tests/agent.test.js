@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
@@ -143,11 +143,11 @@ test("default agent invokes Headless without an explicit backend", async () => {
     "read-only",
     "--work-dir",
     capture.argv[5],
-    "--prompt",
+    "--prompt-file",
     capture.argv[7],
   ]);
   assert.match(capture.cwd, /ask-/);
-  assert.match(capture.argv[7], /Question:\s+How do I enable json output\?/);
+  assert.match(capture.promptFile, /Question:\s+How do I enable json output\?/);
 });
 
 test("explicit coding agent is passed to Headless", async () => {
@@ -161,6 +161,78 @@ test("explicit coding agent is passed to Headless", async () => {
   const capture = JSON.parse(await readFile(capturePath, "utf8"));
   assert.deepEqual(capture.argv.slice(0, 3), ["-y", "@roberttlange/headless", "claude"]);
   assert.deepEqual(capture.argv.slice(3, 7), ["--allow", "read-only", "--work-dir", capture.argv[6]]);
+});
+
+test("Headless receives reasoning effort and usage flags", async () => {
+  const { capturePath } = await withFakeNpx(async () => {
+    const result = await run([
+      "--agent",
+      "codex",
+      "--reasoning-effort",
+      "high",
+      "--usage",
+      "fixture-cli-npm",
+      "How do I enable json output?",
+    ]);
+
+    assert.equal(result.exitCode, 0);
+    assert.match(result.stdout, /headless answer/);
+    assert.match(result.stdout, /"usage"/);
+  }, { stdout: 'headless answer\n{"usage":{"totalTokens":42}}\n' });
+
+  const capture = JSON.parse(await readFile(capturePath, "utf8"));
+  assert.ok(capture.argv.includes("--usage"));
+  assert.deepEqual(capture.argv.slice(capture.argv.indexOf("--reasoning-effort"), capture.argv.indexOf("--reasoning-effort") + 2), [
+    "--reasoning-effort",
+    "high",
+  ]);
+});
+
+test("JSON usage output is structured outside the answer", async () => {
+  await withFakeNpx(async () => {
+    const result = await run([
+      "--json",
+      "--usage",
+      "--agent",
+      "codex",
+      "fixture-cli-npm",
+      "How do I enable json output?",
+    ]);
+
+    assert.equal(result.exitCode, 0);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.answer, "headless answer");
+    assert.deepEqual(parsed.usage, { totalTokens: 42 });
+  }, { stdout: 'headless answer\n{"usage":{"totalTokens":42}}\n' });
+});
+
+test("Headless path and extra flags come from config", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-config-"));
+  const askConfigDir = join(temp, "ask");
+  await mkdir(askConfigDir);
+  await writeFile(
+    join(askConfigDir, "config.json"),
+    JSON.stringify({
+      agents: { headless: { path: "headless-local", extraFlags: ["--model", "gpt-5.5"] } },
+    }),
+  );
+
+  const { capturePath } = await withFakeHeadless("headless-local", async () => {
+    const result = await withEnv({ XDG_CONFIG_HOME: temp }, () => run([
+      "--agent",
+      "codex",
+      "fixture-cli-npm",
+      "How do I enable json output?",
+    ]));
+
+    assert.equal(result.exitCode, 0);
+    assert.match(result.stdout, /headless answer/);
+  });
+
+  const capture = JSON.parse(await readFile(capturePath, "utf8"));
+  assert.equal(capture.command, "headless-local");
+  assert.deepEqual(capture.argv.slice(0, 5), ["codex", "--allow", "read-only", "--work-dir", capture.argv[4]]);
+  assert.deepEqual(capture.argv.slice(-2), ["--model", "gpt-5.5"]);
 });
 
 test("Headless failure maps to agent exit code", async () => {
@@ -238,18 +310,72 @@ test("debug mode prints partial Headless trace when the agent times out", async 
   assert.match(result.stderr, /headless timed out after 1s/);
 });
 
+test("Headless prompt file is removed after completion", async () => {
+  const { capturePath } = await withFakeNpx(async () => {
+    const result = await run(["--agent", "codex", "fixture-cli-npm", "How do I enable json output?"]);
+
+    assert.equal(result.exitCode, 0);
+  });
+
+  const capture = JSON.parse(await readFile(capturePath, "utf8"));
+  const promptFilePath = capture.argv[capture.argv.indexOf("--prompt-file") + 1];
+  await assert.rejects(() => readFile(promptFilePath, "utf8"), /ENOENT/);
+});
+
+test("Headless timeout terminates descendant processes", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-headless-descendant-"));
+  const markerPath = join(temp, "descendant-alive");
+  try {
+    const { result } = await withFakeNpx(async () => run([
+      "--agent-timeout",
+      "1",
+      "--agent",
+      "codex",
+      "fixture-cli-npm",
+      "How do I enable json output?",
+    ]), {
+      grandchildMarker: markerPath,
+      grandchildDelayMs: 1_800,
+      sleepMs: 5_000,
+    });
+
+    assert.equal(result.exitCode, 4);
+    assert.match(result.stderr, /headless timed out after 1s/);
+    await delay(2_200);
+    await assert.rejects(() => readFile(markerPath, "utf8"), /ENOENT/);
+  } finally {
+    await rm(temp, { force: true, recursive: true });
+  }
+});
+
 async function withFakeNpx(callback, options = {}) {
+  return withFakeHeadless("npx", callback, options);
+}
+
+async function withFakeHeadless(command, callback, options = {}) {
   const temp = await mkdtemp(join(tmpdir(), "ask-fake-headless-"));
   const capturePath = join(temp, "capture.json");
-  const npxPath = join(temp, "npx");
-  await writeFile(npxPath, `#!/usr/bin/env node
-const { writeFileSync } = require("node:fs");
+  const commandPath = join(temp, command);
+  await writeFile(commandPath, `#!/usr/bin/env node
+const { readFileSync, writeFileSync } = require("node:fs");
+const { spawn } = require("node:child_process");
+const argv = process.argv.slice(2);
+const promptFileIndex = argv.indexOf("--prompt-file");
 writeFileSync(process.env.ASK_NPX_CAPTURE, JSON.stringify({
-  argv: process.argv.slice(2),
-  cwd: process.cwd()
+  command: process.argv[1].split("/").pop(),
+  argv,
+  cwd: process.cwd(),
+  promptFile: promptFileIndex === -1 ? "" : readFileSync(argv[promptFileIndex + 1], "utf8")
 }));
 if (process.env.ASK_NPX_STDERR) {
   process.stderr.write(process.env.ASK_NPX_STDERR);
+}
+if (process.env.ASK_NPX_GRANDCHILD_MARKER) {
+  const child = spawn(process.execPath, [
+    "-e",
+    "setTimeout(() => require('node:fs').writeFileSync(process.env.ASK_NPX_GRANDCHILD_MARKER, 'alive'), Number(process.env.ASK_NPX_GRANDCHILD_DELAY_MS || '1500'))",
+  ], { env: process.env, stdio: "ignore" });
+  child.unref();
 }
 process.stdout.write(process.env.ASK_NPX_STDOUT || "headless answer\\n");
 const exitCode = Number(process.env.ASK_NPX_EXIT || "0");
@@ -260,7 +386,7 @@ if (sleepMs > 0) {
   process.exit(exitCode);
 }
 `);
-  await chmod(npxPath, 0o755);
+  await chmod(commandPath, 0o755);
 
   const previous = {
     PATH: process.env.PATH,
@@ -269,17 +395,34 @@ if (sleepMs > 0) {
     ASK_NPX_STDERR: process.env.ASK_NPX_STDERR,
     ASK_NPX_STDOUT: process.env.ASK_NPX_STDOUT,
     ASK_NPX_SLEEP_MS: process.env.ASK_NPX_SLEEP_MS,
+    ASK_NPX_GRANDCHILD_MARKER: process.env.ASK_NPX_GRANDCHILD_MARKER,
+    ASK_NPX_GRANDCHILD_DELAY_MS: process.env.ASK_NPX_GRANDCHILD_DELAY_MS,
   };
 
-  process.env.PATH = `${temp}${delimiter}${process.env.PATH ?? ""}`;
-  process.env.ASK_NPX_CAPTURE = capturePath;
-  setOptionalEnv("ASK_NPX_EXIT", options.exitCode === undefined ? undefined : String(options.exitCode));
-  setOptionalEnv("ASK_NPX_STDERR", options.stderr);
-  setOptionalEnv("ASK_NPX_STDOUT", options.stdout);
-  setOptionalEnv("ASK_NPX_SLEEP_MS", options.sleepMs === undefined ? undefined : String(options.sleepMs));
+  try {
+    return await withEnv({
+      PATH: `${temp}${delimiter}${process.env.PATH ?? ""}`,
+      ASK_NPX_CAPTURE: capturePath,
+      ASK_NPX_EXIT: options.exitCode === undefined ? undefined : String(options.exitCode),
+      ASK_NPX_STDERR: options.stderr,
+      ASK_NPX_STDOUT: options.stdout,
+      ASK_NPX_SLEEP_MS: options.sleepMs === undefined ? undefined : String(options.sleepMs),
+      ASK_NPX_GRANDCHILD_MARKER: options.grandchildMarker,
+      ASK_NPX_GRANDCHILD_DELAY_MS: options.grandchildDelayMs === undefined ? undefined : String(options.grandchildDelayMs),
+    }, async () => ({ capturePath, result: await callback() }));
+  } finally {
+    restoreEnv(previous);
+  }
+}
+
+async function withEnv(values, callback) {
+  const previous = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]));
+  for (const [key, value] of Object.entries(values)) {
+    setOptionalEnv(key, value);
+  }
 
   try {
-    return { capturePath, result: await callback() };
+    return await callback();
   } finally {
     restoreEnv(previous);
   }
@@ -309,4 +452,8 @@ async function eventually(predicate) {
   }
 
   assert.fail("condition was not met before timeout");
+}
+
+async function delay(ms) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
