@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
@@ -310,6 +310,44 @@ test("debug mode prints partial Headless trace when the agent times out", async 
   assert.match(result.stderr, /headless timed out after 1s/);
 });
 
+test("Headless prompt file is removed after completion", async () => {
+  const { capturePath } = await withFakeNpx(async () => {
+    const result = await run(["--agent", "codex", "fixture-cli-npm", "How do I enable json output?"]);
+
+    assert.equal(result.exitCode, 0);
+  });
+
+  const capture = JSON.parse(await readFile(capturePath, "utf8"));
+  const promptFilePath = capture.argv[capture.argv.indexOf("--prompt-file") + 1];
+  await assert.rejects(() => readFile(promptFilePath, "utf8"), /ENOENT/);
+});
+
+test("Headless timeout terminates descendant processes", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-headless-descendant-"));
+  const markerPath = join(temp, "descendant-alive");
+  try {
+    const { result } = await withFakeNpx(async () => run([
+      "--agent-timeout",
+      "1",
+      "--agent",
+      "codex",
+      "fixture-cli-npm",
+      "How do I enable json output?",
+    ]), {
+      grandchildMarker: markerPath,
+      grandchildDelayMs: 1_800,
+      sleepMs: 5_000,
+    });
+
+    assert.equal(result.exitCode, 4);
+    assert.match(result.stderr, /headless timed out after 1s/);
+    await delay(2_200);
+    await assert.rejects(() => readFile(markerPath, "utf8"), /ENOENT/);
+  } finally {
+    await rm(temp, { force: true, recursive: true });
+  }
+});
+
 async function withFakeNpx(callback, options = {}) {
   return withFakeHeadless("npx", callback, options);
 }
@@ -320,6 +358,7 @@ async function withFakeHeadless(command, callback, options = {}) {
   const commandPath = join(temp, command);
   await writeFile(commandPath, `#!/usr/bin/env node
 const { readFileSync, writeFileSync } = require("node:fs");
+const { spawn } = require("node:child_process");
 const argv = process.argv.slice(2);
 const promptFileIndex = argv.indexOf("--prompt-file");
 writeFileSync(process.env.ASK_NPX_CAPTURE, JSON.stringify({
@@ -330,6 +369,13 @@ writeFileSync(process.env.ASK_NPX_CAPTURE, JSON.stringify({
 }));
 if (process.env.ASK_NPX_STDERR) {
   process.stderr.write(process.env.ASK_NPX_STDERR);
+}
+if (process.env.ASK_NPX_GRANDCHILD_MARKER) {
+  const child = spawn(process.execPath, [
+    "-e",
+    "setTimeout(() => require('node:fs').writeFileSync(process.env.ASK_NPX_GRANDCHILD_MARKER, 'alive'), Number(process.env.ASK_NPX_GRANDCHILD_DELAY_MS || '1500'))",
+  ], { env: process.env, stdio: "ignore" });
+  child.unref();
 }
 process.stdout.write(process.env.ASK_NPX_STDOUT || "headless answer\\n");
 const exitCode = Number(process.env.ASK_NPX_EXIT || "0");
@@ -349,6 +395,8 @@ if (sleepMs > 0) {
     ASK_NPX_STDERR: process.env.ASK_NPX_STDERR,
     ASK_NPX_STDOUT: process.env.ASK_NPX_STDOUT,
     ASK_NPX_SLEEP_MS: process.env.ASK_NPX_SLEEP_MS,
+    ASK_NPX_GRANDCHILD_MARKER: process.env.ASK_NPX_GRANDCHILD_MARKER,
+    ASK_NPX_GRANDCHILD_DELAY_MS: process.env.ASK_NPX_GRANDCHILD_DELAY_MS,
   };
 
   try {
@@ -359,6 +407,8 @@ if (sleepMs > 0) {
       ASK_NPX_STDERR: options.stderr,
       ASK_NPX_STDOUT: options.stdout,
       ASK_NPX_SLEEP_MS: options.sleepMs === undefined ? undefined : String(options.sleepMs),
+      ASK_NPX_GRANDCHILD_MARKER: options.grandchildMarker,
+      ASK_NPX_GRANDCHILD_DELAY_MS: options.grandchildDelayMs === undefined ? undefined : String(options.grandchildDelayMs),
     }, async () => ({ capturePath, result: await callback() }));
   } finally {
     restoreEnv(previous);
@@ -402,4 +452,8 @@ async function eventually(predicate) {
   }
 
   assert.fail("condition was not met before timeout");
+}
+
+async function delay(ms) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }

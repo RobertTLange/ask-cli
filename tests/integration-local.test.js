@@ -37,21 +37,29 @@ async function run(command, args, options = {}) {
     let stderr = "";
     let settled = false;
     let timedOut = false;
+    let childPid;
+    let forceKillTimer;
     const child = spawn(command, args, {
       cwd: options.cwd,
+      detached: true,
       env: options.env ?? process.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
+    childPid = child.pid;
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGTERM");
-      setTimeout(() => child.kill("SIGKILL"), 2000).unref();
+      killProcessGroup(childPid, "SIGTERM");
+      forceKillTimer = setTimeout(() => killProcessGroup(childPid, "SIGKILL"), 2000);
+      forceKillTimer.unref();
     }, timeoutMs);
 
     const finish = (code) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (forceKillTimer) {
+        clearTimeout(forceKillTimer);
+      }
       resolve({ code, stdout, stderr, timedOut });
     };
 
@@ -71,6 +79,22 @@ async function run(command, args, options = {}) {
       finish(timedOut ? 124 : signal ? 1 : (code ?? 1));
     });
   });
+}
+
+function killProcessGroup(pid, signal) {
+  if (pid === undefined) {
+    return;
+  }
+
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    try {
+      process.kill(pid, signal);
+    } catch {
+      return;
+    }
+  }
 }
 
 function assertSuccess(result, label) {
