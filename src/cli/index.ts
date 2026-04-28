@@ -444,7 +444,7 @@ function formatConfigError(error: unknown): RunResult {
         "Config error.",
         `Attempted: read ${error.path}`,
         `Failure: ${error.message}`,
-        "Next step: fix the JSON config or move it aside.",
+        "Next step: fix the TOML config or move it aside.",
         "",
       ].join("\n"),
     };
@@ -457,7 +457,7 @@ function formatConfigError(error: unknown): RunResult {
       "Config error.",
       "Attempted: load ask configuration",
       `Failure: ${message}`,
-      "Next step: run with a valid JSON config file.",
+      "Next step: run with a valid TOML config file.",
       "",
     ].join("\n"),
   };

@@ -2,6 +2,7 @@ import { access, readFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { parse as parseToml } from "smol-toml";
 import { defaultConfig } from "./constants.js";
 
 export type Ecosystem = "auto" | "python" | "npm" | "cargo" | "homebrew" | "fallback";
@@ -82,7 +83,7 @@ export async function loadConfig(
     return { ...defaultConfig };
   }
 
-  const rawConfig = await readJsonConfig(path);
+  const rawConfig = await readTomlConfig(path);
   return mergeConfig({
     ...parseDefaultsConfig(rawConfig.defaults, path),
     ...parseHeadlessConfig(rawConfig, path),
@@ -90,8 +91,8 @@ export async function loadConfig(
 }
 
 export function configPath(env: NodeJS.ProcessEnv, home = homedir()): string {
-  const configHome = env.XDG_CONFIG_HOME || join(home, ".config");
-  return join(configHome, "ask", "config.json");
+  void env;
+  return join(home, ".ask", "config.toml");
 }
 
 export function mergeConfig(overrides: Partial<CliConfig>): CliConfig {
@@ -110,13 +111,13 @@ async function fileExists(path: string): Promise<boolean> {
   }
 }
 
-async function readJsonConfig(path: string): Promise<FileConfig> {
+async function readTomlConfig(path: string): Promise<FileConfig> {
   try {
     const raw = await readFile(path, "utf8");
-    const parsed: unknown = JSON.parse(raw);
+    const parsed: unknown = parseToml(raw);
 
     if (!isRecord(parsed)) {
-      throw new ConfigError(path, "config root must be a JSON object");
+      throw new ConfigError(path, "config root must be a TOML table");
     }
 
     return parsed as FileConfig;
@@ -146,7 +147,7 @@ function parseDefaultsConfig(defaults: FileConfig["defaults"], path: string): Pa
   }
 
   if (!isRecord(defaults)) {
-    throw new ConfigError(path, "defaults must be a JSON object");
+    throw new ConfigError(path, "defaults must be a TOML table");
   }
 
   if (Object.hasOwn(defaults, "headlessPath")) {
