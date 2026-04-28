@@ -156,34 +156,23 @@ Options:
 `ask` reads optional defaults from:
 
 ```text
-$XDG_CONFIG_HOME/ask/config.json
-```
-
-When `XDG_CONFIG_HOME` is unset, it falls back to:
-
-```text
-~/.config/ask/config.json
+~/.ask/config.toml
 ```
 
 Example:
 
-```json
-{
-  "defaults": {
-    "agent": "codex",
-    "ecosystem": "auto",
-    "maxFiles": 200,
-    "agentTimeout": 600,
-    "usage": false,
-    "reasoningEffort": "high"
-  },
-  "agents": {
-    "headless": {
-      "path": "headless",
-      "extraFlags": ["--model", "gpt-5.5"]
-    }
-  }
-}
+```toml
+[defaults]
+agent = "codex"
+ecosystem = "auto"
+maxFiles = 200
+agentTimeout = 600
+usage = false
+reasoningEffort = "high"
+
+[agents.headless]
+path = "headless"
+extraFlags = ["--model", "gpt-5.5"]
 ```
 
 CLI flags override config defaults.
