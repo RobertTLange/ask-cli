@@ -208,17 +208,20 @@ test("JSON usage output is structured outside the answer", async () => {
 
 test("Headless path and extra flags come from config", async () => {
   const temp = await mkdtemp(join(tmpdir(), "ask-config-"));
-  const askConfigDir = join(temp, "ask");
+  const askConfigDir = join(temp, ".ask");
   await mkdir(askConfigDir);
   await writeFile(
-    join(askConfigDir, "config.json"),
-    JSON.stringify({
-      agents: { headless: { path: "headless-local", extraFlags: ["--model", "gpt-5.5"] } },
-    }),
+    join(askConfigDir, "config.toml"),
+    [
+      "[agents.headless]",
+      "path = \"headless-local\"",
+      "extraFlags = [\"--model\", \"gpt-5.5\"]",
+      "",
+    ].join("\n"),
   );
 
   const { capturePath } = await withFakeHeadless("headless-local", async () => {
-    const result = await withEnv({ XDG_CONFIG_HOME: temp }, () => run([
+    const result = await withEnv({ HOME: temp }, () => run([
       "--agent",
       "codex",
       "fixture-cli-npm",

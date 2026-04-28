@@ -172,21 +172,21 @@ function createFixture(nonce, label) {
 }
 
 function createAskConfig(headlessPath) {
-  const configHome = mkdtempSync(join(tmpdir(), "ask-config-"));
-  const configDir = join(configHome, "ask");
+  const home = mkdtempSync(join(tmpdir(), "ask-home-"));
+  const configDir = join(home, ".ask");
   mkdirSync(configDir, { recursive: true });
   writeFileSync(
-    join(configDir, "config.json"),
-    JSON.stringify({ agents: { headless: { path: headlessPath } } }, null, 2),
+    join(configDir, "config.toml"),
+    ["[agents.headless]", `path = ${JSON.stringify(headlessPath)}`, ""].join("\n"),
   );
-  return configHome;
+  return home;
 }
 
-function integrationEnv(binDir, configHome) {
+function integrationEnv(binDir, home) {
   return {
     ...process.env,
     PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}`,
-    XDG_CONFIG_HOME: configHome,
+    HOME: home,
   };
 }
 
