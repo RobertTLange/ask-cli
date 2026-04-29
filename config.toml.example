@@ -1,0 +1,11 @@
+[defaults]
+agent = "claude"
+ecosystem = "auto"
+maxFiles = 200
+agentTimeout = 600
+usage = false
+reasoningEffort = "high"
+
+[agents.headless]
+path = "headless"
+extraFlags = ["--model", "sonnet"]

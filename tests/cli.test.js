@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -165,6 +165,23 @@ test("loads Headless config from TOML", async () => {
   assert.equal(loaded.reasoningEffort, "xhigh");
   assert.equal(loaded.headlessPath, "headless-local");
   assert.deepEqual(loaded.headlessExtraFlags, ["--model", "gpt-5.5"]);
+});
+
+test("example config uses Claude Sonnet and parses as defaults", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-config-"));
+  const askConfigDir = join(temp, ".ask");
+  await mkdir(askConfigDir);
+  await writeFile(
+    join(askConfigDir, "config.toml"),
+    await readFile(join(process.cwd(), "config.toml.example"), "utf8"),
+  );
+
+  const loaded = await loadConfig({}, temp);
+
+  assert.equal(loaded.agent, "claude");
+  assert.equal(loaded.reasoningEffort, "high");
+  assert.equal(loaded.headlessPath, "headless");
+  assert.deepEqual(loaded.headlessExtraFlags, ["--model", "sonnet"]);
 });
 
 test("rejects Headless extra flags owned by ask", async () => {

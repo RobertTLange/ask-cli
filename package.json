@@ -12,6 +12,7 @@
   },
   "files": [
     "bin",
+    "config.toml.example",
     "dist",
     "docs"
   ],

@@ -163,7 +163,7 @@ Example:
 
 ```toml
 [defaults]
-agent = "codex"
+agent = "claude"
 ecosystem = "auto"
 maxFiles = 200
 agentTimeout = 600
@@ -172,8 +172,10 @@ reasoningEffort = "high"
 
 [agents.headless]
 path = "headless"
-extraFlags = ["--model", "gpt-5.5"]
+extraFlags = ["--model", "sonnet"]
 ```
+
+See [config.toml.example](config.toml.example) for a copyable config file.
 
 CLI flags override config defaults.
 
