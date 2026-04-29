@@ -121,7 +121,11 @@ async function runQuestion(
     durationMs: Math.round(performance.now() - ecosystemStartedAt),
   });
 
-  const resolution = await resolveForEcosystem(located, ecosystem.ecosystem);
+  const resolution = await resolveForEcosystem(
+    located,
+    ecosystem.ecosystem,
+    invocation.config.ecosystem === "auto",
+  );
 
   const cache = new CacheStore();
   const cacheKey = await cacheKeyForResolution(resolution);
@@ -355,6 +359,7 @@ function formatAgentTrace(trace: string): string {
 async function resolveForEcosystem(
   located: Awaited<ReturnType<typeof locateExecutable>>,
   ecosystem: Resolution["ecosystem"],
+  allowFallbackUpgrade = false,
 ): Promise<Resolution> {
   switch (ecosystem) {
     case "python":
@@ -366,6 +371,12 @@ async function resolveForEcosystem(
     case "homebrew":
       return resolveHomebrewPackage(located);
     case "fallback":
+      if (allowFallbackUpgrade) {
+        const pythonResolution = await resolvePythonPackage(located);
+        if (pythonResolution.packageName !== null) {
+          return pythonResolution;
+        }
+      }
       return resolveGenericFallback(located);
   }
 }

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { realpath } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -24,6 +25,62 @@ test("python resolver parses dist-info metadata for fixture CLI", async () => {
   assert.match(resolution.packageRoot, /fixture_cli_py$/);
   assert.match(resolution.entryFile, /fixture_cli_py\/cli\.py$/);
   assert.equal(resolution.executableRealPath, await realpath(fixtureExecutable));
+});
+
+test("python resolver roots native wheel binaries from RECORD", async () => {
+  const fixture = await createNativeWheelFixture();
+
+  const located = {
+    command: "native-py-cli",
+    path: fixture.executable,
+    realPath: await realpath(fixture.executable),
+    symlinkChain: [],
+    shebang: null,
+    executableKind: "unknown",
+    mtimeNs: 1n,
+    shim: null,
+  };
+
+  const resolution = await resolvePythonPackage(located);
+
+  assert.equal(resolution.ecosystem, "python");
+  assert.equal(resolution.packageName, "native-py-cli");
+  assert.equal(resolution.version, "1.2.3");
+  assert.equal(resolution.confidence, "medium");
+  assert.equal(resolution.packageRoot, fixture.packageRoot);
+  assert.equal(resolution.entryFile, join(fixture.packageRoot, "__main__.py"));
+  assert.deepEqual(resolution.metadataFiles.sort(), [
+    join(fixture.distInfo, "METADATA"),
+    join(fixture.distInfo, "RECORD"),
+  ].sort());
+});
+
+test("CLI auto fallback upgrades native Python wheel binaries", async () => {
+  const fixture = await createNativeWheelFixture();
+  const originalPath = process.env.PATH;
+  process.env.PATH = join(fixture.temp, "bin");
+
+  try {
+    const result = await run([
+      "--agent",
+      "none",
+      "--no-exec",
+      "--refresh",
+      "native-py-cli",
+      "Where is it configured?",
+    ]);
+
+    assert.equal(result.exitCode, 0);
+    assert.match(result.stdout, /Ecosystem: python/);
+    assert.match(result.stdout, /Package: native-py-cli 1\.2\.3/);
+    assert.match(result.stdout, /Package root: .*native_py_cli/);
+  } finally {
+    if (originalPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = originalPath;
+    }
+  }
 });
 
 test("python resolver returns low confidence when metadata is unavailable", async () => {
@@ -59,3 +116,30 @@ test("CLI --agent none reports Python fixture resolution", async () => {
   assert.match(result.stdout, /Package: fixture-cli-py 0\.1\.0/);
   assert.match(result.stdout, /Confidence: medium/);
 });
+
+async function createNativeWheelFixture() {
+  const temp = await mkdtemp(join(tmpdir(), "ask-python-native-"));
+  const executable = join(temp, "bin", "native-py-cli");
+  const sitePackages = join(temp, "lib", "python3.12", "site-packages");
+  const packageRoot = join(sitePackages, "native_py_cli");
+  const distInfo = join(sitePackages, "native_py_cli-1.2.3.dist-info");
+
+  await mkdir(join(temp, "bin"), { recursive: true });
+  await mkdir(packageRoot, { recursive: true });
+  await mkdir(distInfo, { recursive: true });
+  await writeFile(executable, "binary-ish");
+  await chmod(executable, 0o755);
+  await writeFile(join(packageRoot, "__init__.py"), "");
+  await writeFile(join(packageRoot, "__main__.py"), "def main(): pass\n");
+  await writeFile(join(distInfo, "METADATA"), "Name: native-py-cli\nVersion: 1.2.3\n");
+  await writeFile(join(distInfo, "RECORD"), [
+    "../../../bin/native-py-cli,sha256=fake,10",
+    "native_py_cli/__init__.py,sha256=fake,0",
+    "native_py_cli/__main__.py,sha256=fake,16",
+    "native_py_cli-1.2.3.dist-info/METADATA,sha256=fake,42",
+    "native_py_cli-1.2.3.dist-info/RECORD,,",
+    "",
+  ].join("\n"));
+
+  return { temp, executable, packageRoot, distInfo };
+}

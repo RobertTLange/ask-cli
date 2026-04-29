@@ -1,5 +1,5 @@
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { runSandbox } from "../sandbox.js";
 import type { LocatedExecutable, Resolution } from "../types.js";
 
@@ -11,6 +11,10 @@ interface PythonCandidate {
   readonly metadataFiles: readonly string[];
   readonly confidence: Resolution["confidence"];
   readonly source: "tier-a" | "tier-b";
+}
+
+interface RecordEntry {
+  readonly path: string;
 }
 
 const introspectionScript = String.raw`
@@ -129,24 +133,43 @@ async function resolveFromSitePackages(
 
   for (const entry of entries.filter((value) => value.endsWith(".dist-info")).sort()) {
     const distInfo = join(sitePackages, entry);
+    const recordPath = join(distInfo, "RECORD");
     const metadata = await readMetadata(join(distInfo, "METADATA"));
     const entryPoint = await readConsoleScript(join(distInfo, "entry_points.txt"), located.command);
+    const recordEntries = await readRecordEntries(sitePackages, recordPath);
+    const executableMatchesRecord = await recordContainsExecutable(recordEntries, located.realPath);
+    const metadataFiles = await existingMetadataFiles(distInfo);
 
-    if (!metadata.name || !entryPoint) {
+    if (!metadata.name) {
       continue;
     }
 
-    const entryFile = await findEntryFile(sitePackages, entryPoint.module);
-    const recordPaths = await readRecordPaths(sitePackages, join(distInfo, "RECORD"));
-    const executableMatchesRecord = await recordContainsExecutable(recordPaths, located.realPath);
+    if (entryPoint) {
+      const entryFile = await findEntryFile(sitePackages, entryPoint.module);
 
+      return {
+        packageName: metadata.name,
+        version: metadata.version,
+        packageRoot: entryFile ? packageRootForEntry(entryFile, entryPoint.module) : sitePackages,
+        entryFile,
+        metadataFiles,
+        confidence: executableMatchesRecord ? "medium" : "low",
+        source: "tier-b",
+      };
+    }
+
+    if (!executableMatchesRecord) {
+      continue;
+    }
+
+    const nativeEntry = await inferNativeWheelEntry(sitePackages, metadata.name, recordEntries);
     return {
       packageName: metadata.name,
       version: metadata.version,
-      packageRoot: entryFile ? packageRootForEntry(entryFile, entryPoint.module) : sitePackages,
-      entryFile,
-      metadataFiles: [distInfo],
-      confidence: executableMatchesRecord ? "medium" : "low",
+      packageRoot: nativeEntry?.packageRoot ?? null,
+      entryFile: nativeEntry?.entryFile ?? null,
+      metadataFiles,
+      confidence: "medium",
       source: "tier-b",
     };
   }
@@ -263,23 +286,34 @@ async function findEntryFile(sitePackages: string, moduleName: string): Promise<
   return (await fileExists(packageCandidate)) ? packageCandidate : null;
 }
 
-async function readRecordPaths(sitePackages: string, recordPath: string): Promise<readonly string[]> {
+async function readRecordEntries(sitePackages: string, recordPath: string): Promise<readonly RecordEntry[]> {
   try {
     const content = await readFile(recordPath, "utf8");
     return content
       .split(/\r?\n/)
       .map((line) => line.split(",", 1)[0])
       .filter((path) => path.length > 0)
-      .map((path) => resolve(sitePackages, path));
+      .map((path) => ({
+        path: resolve(sitePackages, path),
+      }));
   } catch {
     return [];
   }
 }
 
-async function recordContainsExecutable(paths: readonly string[], executableRealPath: string): Promise<boolean> {
-  for (const path of paths) {
+async function recordContainsExecutable(entries: readonly RecordEntry[], executableRealPath: string): Promise<boolean> {
+  const executableName = basename(executableRealPath);
+  for (const entry of entries) {
+    if (resolve(entry.path) === executableRealPath) {
+      return true;
+    }
+
+    if (basename(entry.path) !== executableName) {
+      continue;
+    }
+
     try {
-      if ((await realpath(path)) === executableRealPath) {
+      if ((await realpath(entry.path)) === executableRealPath) {
         return true;
       }
     } catch {
@@ -288,6 +322,97 @@ async function recordContainsExecutable(paths: readonly string[], executableReal
   }
 
   return false;
+}
+
+async function existingMetadataFiles(distInfo: string): Promise<readonly string[]> {
+  const files = ["METADATA", "entry_points.txt", "RECORD"].map((file) => join(distInfo, file));
+  const existing: string[] = [];
+  for (const file of files) {
+    if (await fileExists(file)) {
+      existing.push(file);
+    }
+  }
+
+  return existing;
+}
+
+async function inferNativeWheelEntry(
+  sitePackages: string,
+  packageName: string,
+  records: readonly RecordEntry[],
+): Promise<{ packageRoot: string | null; entryFile: string | null } | null> {
+  const roots = importRootCandidates(sitePackages, packageName, records);
+
+  for (const root of roots) {
+    if (root.kind === "module") {
+      return { packageRoot: null, entryFile: root.path };
+    }
+
+    const mainFile = join(root.path, "__main__.py");
+    if (await fileExists(mainFile)) {
+      return { packageRoot: root.path, entryFile: mainFile };
+    }
+
+    const initFile = join(root.path, "__init__.py");
+    if (await fileExists(initFile)) {
+      return { packageRoot: root.path, entryFile: initFile };
+    }
+  }
+
+  return null;
+}
+
+function importRootCandidates(
+  sitePackages: string,
+  packageName: string,
+  records: readonly RecordEntry[],
+): ReadonlyArray<{ kind: "package" | "module"; path: string; score: number }> {
+  const normalizedPackageName = normalizePythonName(packageName);
+  const byPath = new Map<string, { kind: "package" | "module"; path: string; score: number }>();
+
+  for (const record of records) {
+    const relPath = relativeWithin(sitePackages, record.path);
+    if (!relPath) {
+      continue;
+    }
+
+    const parts = relPath.split(/[\\/]/);
+    const firstPart = parts[0];
+    if (!firstPart || firstPart.endsWith(".dist-info") || firstPart.endsWith(".data")) {
+      continue;
+    }
+
+    if (parts.length === 1 && /\.(py|pyi|so|pyd)$/.test(firstPart)) {
+      const score = normalizePythonName(firstPart.replace(/\.(py|pyi|so|pyd)$/, "")) === normalizedPackageName ? 10 : 0;
+      byPath.set(record.path, { kind: "module", path: record.path, score });
+      continue;
+    }
+
+    if (parts.length > 1 && /\.(py|pyi|so|pyd)$/.test(parts.at(-1) ?? "")) {
+      const rootPath = join(sitePackages, firstPart);
+      const score = normalizePythonName(firstPart) === normalizedPackageName ? 10 : 0;
+      byPath.set(rootPath, { kind: "package", path: rootPath, score });
+    }
+  }
+
+  return [...byPath.values()].sort((left, right) => {
+    if (right.score !== left.score) {
+      return right.score - left.score;
+    }
+    return left.path.localeCompare(right.path);
+  });
+}
+
+function relativeWithin(root: string, path: string): string | null {
+  const relPath = relative(resolve(root), resolve(path));
+  if (!relPath || relPath.startsWith("..") || isAbsolute(relPath)) {
+    return null;
+  }
+  return relPath;
+}
+
+function normalizePythonName(value: string): string {
+  return value.toLowerCase().replace(/[-.]+/g, "_");
 }
 
 function pythonFromShebang(shebang: string | null): string | null {
