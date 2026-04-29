@@ -66,9 +66,7 @@ export async function collectContext(
   }
 
   for (const metadataFile of resolution.metadataFiles) {
-    if (isReadablePackageFile(discoveryState, metadataFile)) {
-      await addFileRef(discoveryState, metadataFile, "config");
-    }
+    await addFileRef(discoveryState, metadataFile, "config", metadataRelPath(discoveryState, metadataFile));
   }
 
   if (resolution.packageRoot) {
@@ -204,6 +202,7 @@ async function addFileRef(
   state: DiscoveryState,
   path: string,
   forcedKind?: FileKind,
+  relPathOverride?: string,
 ): Promise<string | null> {
   if (state.files.length >= state.limits.maxFiles || state.totalBytes >= state.limits.maxTotalBytes) {
     state.truncatedByLimit = true;
@@ -229,9 +228,9 @@ async function addFileRef(
   const remainingBytes = state.limits.maxTotalBytes - state.totalBytes;
   const readLimit = Math.min(state.limits.maxBytesPerFile, Math.max(0, remainingBytes));
   const content = await readFilePrefix(path, readLimit);
-  const relPath = state.resolution.packageRoot
+  const relPath = relPathOverride ?? (state.resolution.packageRoot
     ? relative(state.resolution.packageRoot, path)
-    : path;
+    : path);
   const kind = forcedKind ?? classifyFile(path, relPath, content, state.resolution.entryFile);
 
   if (!kind) {
@@ -253,6 +252,14 @@ async function addFileRef(
   }
 
   return content;
+}
+
+function metadataRelPath(state: DiscoveryState, path: string): string | undefined {
+  if (!state.resolution.packageRoot || isReadablePackageFile(state, path)) {
+    return undefined;
+  }
+
+  return join("_metadata", basename(dirname(path)), basename(path));
 }
 
 async function readFilePrefix(path: string, limit: number): Promise<string> {

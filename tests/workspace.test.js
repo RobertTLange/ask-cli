@@ -116,6 +116,100 @@ test("workspace skips symlink escapes", async () => {
   }
 });
 
+test("workspace stages resolver metadata sidecars outside package root", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-workspace-metadata-"));
+  const packageRoot = join(temp, "site-packages", "tool");
+  const distInfo = join(temp, "site-packages", "tool-1.0.0.dist-info");
+  const metadataFile = join(distInfo, "METADATA");
+  await mkdir(packageRoot, { recursive: true });
+  await mkdir(distInfo, { recursive: true });
+  await writeFile(join(packageRoot, "__main__.py"), "print('tool')\n");
+  await writeFile(metadataFile, "Name: tool\nVersion: 1.0.0\n");
+
+  const staged = await stageWorkspace({
+    resolution: {
+      command: "tool",
+      executablePath: "/bin/tool",
+      executableRealPath: "/bin/tool",
+      executableMtimeNs: 1n,
+      ecosystem: "python",
+      packageName: "tool",
+      version: "1.0.0",
+      packageRoot,
+      entryFile: join(packageRoot, "__main__.py"),
+      metadataFiles: [metadataFile],
+      confidence: "medium",
+      warnings: [],
+      shim: null,
+    },
+    helpOutputs: [],
+    files: [{
+      path: metadataFile,
+      relPath: "_metadata/tool-1.0.0.dist-info/METADATA",
+      sizeBytes: 27,
+      truncated: false,
+      kind: "config",
+    }],
+    totalBytes: 27,
+    warnings: [],
+  }, { question: "metadata?" });
+
+  try {
+    const stagedMetadata = join(staged.path, "package", "_metadata", "tool-1.0.0.dist-info", "METADATA");
+    assert.match(await readFile(stagedMetadata, "utf8"), /Name: tool/);
+  } finally {
+    await staged.cleanup();
+  }
+});
+
+test("workspace skips metadata sidecars that resolve outside package parent", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-workspace-metadata-escape-"));
+  const packageRoot = join(temp, "site-packages", "tool");
+  const distInfo = join(temp, "site-packages", "tool-1.0.0.dist-info");
+  const outside = join(temp, "outside-secret.txt");
+  const metadataLink = join(distInfo, "METADATA");
+  await mkdir(packageRoot, { recursive: true });
+  await mkdir(distInfo, { recursive: true });
+  await writeFile(outside, "do not stage");
+  await symlink(outside, metadataLink);
+
+  const staged = await stageWorkspace({
+    resolution: {
+      command: "tool",
+      executablePath: "/bin/tool",
+      executableRealPath: "/bin/tool",
+      executableMtimeNs: 1n,
+      ecosystem: "python",
+      packageName: "tool",
+      version: "1.0.0",
+      packageRoot,
+      entryFile: null,
+      metadataFiles: [metadataLink],
+      confidence: "medium",
+      warnings: [],
+      shim: null,
+    },
+    helpOutputs: [],
+    files: [{
+      path: metadataLink,
+      relPath: "_metadata/tool-1.0.0.dist-info/METADATA",
+      sizeBytes: 12,
+      truncated: false,
+      kind: "config",
+    }],
+    totalBytes: 12,
+    warnings: [],
+  }, { question: "metadata escape?" });
+
+  try {
+    await assert.rejects(lstat(join(staged.path, "package", "_metadata", "tool-1.0.0.dist-info", "METADATA")));
+    const metadata = JSON.parse(await readFile(join(staged.path, "metadata.json"), "utf8"));
+    assert.deepEqual(metadata.skippedFiles, ["_metadata/tool-1.0.0.dist-info/METADATA"]);
+  } finally {
+    await staged.cleanup();
+  }
+});
+
 async function npmFixtureBundle() {
   const located = await locateExecutable("fixture-cli-npm", {
     env: { PATH: fixtureBin, SHELL: "/missing-shell" },

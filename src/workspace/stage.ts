@@ -110,7 +110,11 @@ async function stagePackageFiles(
     : null;
 
   for (const file of bundle.files) {
-    if (packageRoot && !(await isWithinPackageRoot(file, packageRoot))) {
+    if (
+      packageRoot
+      && !(await isWithinPackageRoot(file, packageRoot))
+      && !(await isMetadataSidecar(file, packageRoot))
+    ) {
       skipped.push(file.relPath);
       continue;
     }
@@ -123,6 +127,21 @@ async function stagePackageFiles(
   }
 
   return { staged, skipped };
+}
+
+async function isMetadataSidecar(file: FileRef, packageRoot: string): Promise<boolean> {
+  if (file.kind !== "config" || !file.relPath.startsWith("_metadata/")) {
+    return false;
+  }
+
+  const realFilePath = await realpath(file.path).catch(() => null);
+  if (!realFilePath) {
+    return false;
+  }
+
+  const packageParent = dirname(packageRoot);
+  const relativePath = relative(packageParent, realFilePath);
+  return relativePath !== "" && !relativePath.startsWith("..") && !relativePath.startsWith("/");
 }
 
 async function isWithinPackageRoot(file: FileRef, packageRoot: string): Promise<boolean> {
