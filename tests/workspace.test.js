@@ -87,6 +87,33 @@ test("workspace staging removes stale lock directories", async () => {
   }
 });
 
+test("workspace staging preserves stale-looking locks owned by a live process", async () => {
+  const bundle = await npmFixtureBundle();
+  const staged = await stageWorkspace(bundle, { question: "live lock?" });
+  const lockPath = `${staged.path}.lock`;
+  const oldDate = new Date(Date.now() - 120_000);
+  await utimes(lockPath, oldDate, oldDate);
+
+  let restaged;
+  const restagePromise = stageWorkspace(bundle, { question: "wait for live lock?" }).then((value) => {
+    restaged = value;
+    return value;
+  });
+  const firstResult = await Promise.race([
+    restagePromise.then(() => "resolved"),
+    delay(250).then(() => "waiting"),
+  ]);
+
+  try {
+    assert.equal(firstResult, "waiting");
+  } finally {
+    await staged.cleanup();
+  }
+
+  restaged = await restagePromise;
+  await restaged.cleanup();
+});
+
 test("workspace staging removes orphaned legacy lock directories quickly", async () => {
   const bundle = await npmFixtureBundle();
   const staged = await stageWorkspace(bundle, { question: "find path" });
@@ -267,4 +294,8 @@ function restoreEnv(name, value) {
   }
 
   process.env[name] = value;
+}
+
+async function delay(ms) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }

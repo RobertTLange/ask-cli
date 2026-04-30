@@ -268,7 +268,6 @@ async function removeWorkspace(path: string): Promise<void> {
 
 async function acquireWorkspaceLock(lockPath: string): Promise<() => Promise<void>> {
   const startedAt = Date.now();
-  const staleLockMs = 60_000;
   const legacyLockMs = 2_000;
   const ownerPath = join(lockPath, "owner.json");
   await mkdir(dirname(lockPath), { recursive: true });
@@ -286,7 +285,7 @@ async function acquireWorkspaceLock(lockPath: string): Promise<() => Promise<voi
       }
 
       const lockStat = await stat(lockPath).catch(() => null);
-      if (lockStat && await shouldRemoveWorkspaceLock(lockPath, Date.now() - lockStat.mtimeMs, staleLockMs, legacyLockMs)) {
+      if (lockStat && await shouldRemoveWorkspaceLock(lockPath, Date.now() - lockStat.mtimeMs, legacyLockMs)) {
         await rm(lockPath, { recursive: true, force: true }).catch(() => undefined);
         continue;
       }
@@ -302,7 +301,6 @@ async function acquireWorkspaceLock(lockPath: string): Promise<() => Promise<voi
 async function shouldRemoveWorkspaceLock(
   lockPath: string,
   ageMs: number,
-  staleLockMs: number,
   legacyLockMs: number,
 ): Promise<boolean> {
   const owner = await readWorkspaceLockOwner(join(lockPath, "owner.json"));
@@ -310,7 +308,7 @@ async function shouldRemoveWorkspaceLock(
     return ageMs > legacyLockMs;
   }
 
-  return !isProcessAlive(owner.pid) || ageMs > staleLockMs;
+  return !isProcessAlive(owner.pid);
 }
 
 async function readWorkspaceLockOwner(path: string): Promise<{ readonly pid: number } | null> {
