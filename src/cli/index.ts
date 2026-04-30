@@ -355,7 +355,7 @@ function runHeadlessPrintCommand(command: string, args: readonly string[]): Prom
     const timeout = setTimeout(() => {
       child.kill("SIGTERM");
       settle("");
-    }, 5_000);
+    }, 4_000);
     timeout.unref();
 
     child.stdout?.on("data", (chunk) => {
