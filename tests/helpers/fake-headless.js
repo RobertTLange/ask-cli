@@ -37,8 +37,15 @@ const stdoutText = process.env.ASK_NPX_STDOUT || "{\\"type\\":\\"agent_message\\
 const exitCode = Number(process.env.ASK_NPX_EXIT || "0");
 const sleepMs = Number(process.env.ASK_NPX_SLEEP_MS || "0");
 if (argv.includes("--print-command")) {
-  process.stdout.write(process.env.ASK_NPX_PRINT_COMMAND || "");
-  process.exit(exitCode);
+  const finishPrintCommand = () => {
+    process.stdout.write(process.env.ASK_NPX_PRINT_COMMAND || "");
+    process.exit(exitCode);
+  };
+  if (sleepMs > 0) {
+    setTimeout(finishPrintCommand, sleepMs);
+  } else {
+    finishPrintCommand();
+  }
 }
 if (stdoutChunks) {
   let index = 0;
