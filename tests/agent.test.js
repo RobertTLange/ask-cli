@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
 
 import { run } from "../dist/cli/index.js";
 import { buildAgentPrompt } from "../dist/agents/prompt.js";
+import { delay, eventually, jsonl, withEnv, withFakeHeadless, withFakeNpx } from "./helpers/fake-headless.js";
 
 test("prompt builder includes untrusted-data and no-network rules", () => {
   const prompt = buildAgentPrompt({
@@ -43,6 +44,7 @@ test("none agent human output prints workspace and ASK_CONTEXT", async () => {
   assert.match(result.stdout, /Workspace: /);
   assert.match(result.stdout, /# ask context/);
   assert.match(result.stdout, /Package: fixture-cli-npm 0\.1\.0/);
+  assert.doesNotMatch(result.stderr ?? "", /^ask:/m);
 });
 
 test("verbose prints exact agent prompt to stderr", async () => {
@@ -136,15 +138,16 @@ test("default agent invokes Headless without an explicit backend", async () => {
   });
 
   const capture = JSON.parse(await readFile(capturePath, "utf8"));
-  assert.deepEqual(capture.argv.slice(0, 8), [
+  assert.deepEqual(capture.argv.slice(0, 9), [
     "-y",
     "@roberttlange/headless",
+    "--json",
     "--allow",
     "read-only",
     "--work-dir",
-    capture.argv[5],
+    capture.argv[6],
     "--prompt-file",
-    capture.argv[7],
+    capture.argv[8],
   ]);
   assert.match(capture.cwd, /ask-/);
   assert.match(capture.promptFile, /Question:\s+How do I enable json output\?/);
@@ -160,10 +163,10 @@ test("explicit coding agent is passed to Headless", async () => {
 
   const capture = JSON.parse(await readFile(capturePath, "utf8"));
   assert.deepEqual(capture.argv.slice(0, 3), ["-y", "@roberttlange/headless", "claude"]);
-  assert.deepEqual(capture.argv.slice(3, 7), ["--allow", "read-only", "--work-dir", capture.argv[6]]);
+  assert.deepEqual(capture.argv.slice(3, 8), ["--json", "--allow", "read-only", "--work-dir", capture.argv[7]]);
 });
 
-test("Headless receives reasoning effort and usage flags", async () => {
+test("Headless receives reasoning effort and omits usage flag in JSON trace mode", async () => {
   const { capturePath } = await withFakeNpx(async () => {
     const result = await run([
       "--agent",
@@ -178,10 +181,14 @@ test("Headless receives reasoning effort and usage flags", async () => {
     assert.equal(result.exitCode, 0);
     assert.match(result.stdout, /headless answer/);
     assert.match(result.stdout, /"usage"/);
-  }, { stdout: 'headless answer\n{"usage":{"totalTokens":42}}\n' });
+  }, { stdout: jsonl([
+    { type: "agent_message", text: "headless answer" },
+    { type: "turn.completed", usage: { totalTokens: 42 } },
+  ]) });
 
   const capture = JSON.parse(await readFile(capturePath, "utf8"));
-  assert.ok(capture.argv.includes("--usage"));
+  assert.ok(capture.argv.includes("--json"));
+  assert.ok(!capture.argv.includes("--usage"));
   assert.deepEqual(capture.argv.slice(capture.argv.indexOf("--reasoning-effort"), capture.argv.indexOf("--reasoning-effort") + 2), [
     "--reasoning-effort",
     "high",
@@ -203,7 +210,10 @@ test("JSON usage output is structured outside the answer", async () => {
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.answer, "headless answer");
     assert.deepEqual(parsed.usage, { totalTokens: 42 });
-  }, { stdout: 'headless answer\n{"usage":{"totalTokens":42}}\n' });
+  }, { stdout: jsonl([
+    { type: "agent_message", text: "headless answer" },
+    { type: "turn.completed", usage: { totalTokens: 42 } },
+  ]) });
 });
 
 test("Headless path and extra flags come from config", async () => {
@@ -234,7 +244,7 @@ test("Headless path and extra flags come from config", async () => {
 
   const capture = JSON.parse(await readFile(capturePath, "utf8"));
   assert.equal(capture.command, "headless-local");
-  assert.deepEqual(capture.argv.slice(0, 5), ["codex", "--allow", "read-only", "--work-dir", capture.argv[4]]);
+  assert.deepEqual(capture.argv.slice(0, 6), ["codex", "--json", "--allow", "read-only", "--work-dir", capture.argv[5]]);
   assert.deepEqual(capture.argv.slice(-2), ["--model", "gpt-5.5"]);
 });
 
@@ -350,113 +360,3 @@ test("Headless timeout terminates descendant processes", async () => {
     await rm(temp, { force: true, recursive: true });
   }
 });
-
-async function withFakeNpx(callback, options = {}) {
-  return withFakeHeadless("npx", callback, options);
-}
-
-async function withFakeHeadless(command, callback, options = {}) {
-  const temp = await mkdtemp(join(tmpdir(), "ask-fake-headless-"));
-  const capturePath = join(temp, "capture.json");
-  const commandPath = join(temp, command);
-  await writeFile(commandPath, `#!/usr/bin/env node
-const { readFileSync, writeFileSync } = require("node:fs");
-const { spawn } = require("node:child_process");
-const argv = process.argv.slice(2);
-const promptFileIndex = argv.indexOf("--prompt-file");
-writeFileSync(process.env.ASK_NPX_CAPTURE, JSON.stringify({
-  command: process.argv[1].split("/").pop(),
-  argv,
-  cwd: process.cwd(),
-  promptFile: promptFileIndex === -1 ? "" : readFileSync(argv[promptFileIndex + 1], "utf8")
-}));
-if (process.env.ASK_NPX_STDERR) {
-  process.stderr.write(process.env.ASK_NPX_STDERR);
-}
-if (process.env.ASK_NPX_GRANDCHILD_MARKER) {
-  const child = spawn(process.execPath, [
-    "-e",
-    "setTimeout(() => require('node:fs').writeFileSync(process.env.ASK_NPX_GRANDCHILD_MARKER, 'alive'), Number(process.env.ASK_NPX_GRANDCHILD_DELAY_MS || '1500'))",
-  ], { env: process.env, stdio: "ignore" });
-  child.unref();
-}
-process.stdout.write(process.env.ASK_NPX_STDOUT || "headless answer\\n");
-const exitCode = Number(process.env.ASK_NPX_EXIT || "0");
-const sleepMs = Number(process.env.ASK_NPX_SLEEP_MS || "0");
-if (sleepMs > 0) {
-  setTimeout(() => process.exit(exitCode), sleepMs);
-} else {
-  process.exit(exitCode);
-}
-`);
-  await chmod(commandPath, 0o755);
-
-  const previous = {
-    PATH: process.env.PATH,
-    ASK_NPX_CAPTURE: process.env.ASK_NPX_CAPTURE,
-    ASK_NPX_EXIT: process.env.ASK_NPX_EXIT,
-    ASK_NPX_STDERR: process.env.ASK_NPX_STDERR,
-    ASK_NPX_STDOUT: process.env.ASK_NPX_STDOUT,
-    ASK_NPX_SLEEP_MS: process.env.ASK_NPX_SLEEP_MS,
-    ASK_NPX_GRANDCHILD_MARKER: process.env.ASK_NPX_GRANDCHILD_MARKER,
-    ASK_NPX_GRANDCHILD_DELAY_MS: process.env.ASK_NPX_GRANDCHILD_DELAY_MS,
-  };
-
-  try {
-    return await withEnv({
-      PATH: `${temp}${delimiter}${process.env.PATH ?? ""}`,
-      ASK_NPX_CAPTURE: capturePath,
-      ASK_NPX_EXIT: options.exitCode === undefined ? undefined : String(options.exitCode),
-      ASK_NPX_STDERR: options.stderr,
-      ASK_NPX_STDOUT: options.stdout,
-      ASK_NPX_SLEEP_MS: options.sleepMs === undefined ? undefined : String(options.sleepMs),
-      ASK_NPX_GRANDCHILD_MARKER: options.grandchildMarker,
-      ASK_NPX_GRANDCHILD_DELAY_MS: options.grandchildDelayMs === undefined ? undefined : String(options.grandchildDelayMs),
-    }, async () => ({ capturePath, result: await callback() }));
-  } finally {
-    restoreEnv(previous);
-  }
-}
-
-async function withEnv(values, callback) {
-  const previous = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]));
-  for (const [key, value] of Object.entries(values)) {
-    setOptionalEnv(key, value);
-  }
-
-  try {
-    return await callback();
-  } finally {
-    restoreEnv(previous);
-  }
-}
-
-function restoreEnv(previous) {
-  for (const [key, value] of Object.entries(previous)) {
-    setOptionalEnv(key, value);
-  }
-}
-
-function setOptionalEnv(key, value) {
-  if (value === undefined) {
-    delete process.env[key];
-  } else {
-    process.env[key] = value;
-  }
-}
-
-async function eventually(predicate) {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < 2_000) {
-    if (predicate()) {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-
-  assert.fail("condition was not met before timeout");
-}
-
-async function delay(ms) {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
