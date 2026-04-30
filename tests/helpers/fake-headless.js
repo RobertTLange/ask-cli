@@ -36,6 +36,10 @@ const stdoutChunks = process.env.ASK_NPX_STDOUT_CHUNKS ? JSON.parse(process.env.
 const stdoutText = process.env.ASK_NPX_STDOUT || "{\\"type\\":\\"agent_message\\",\\"text\\":\\"headless answer\\"}\\n";
 const exitCode = Number(process.env.ASK_NPX_EXIT || "0");
 const sleepMs = Number(process.env.ASK_NPX_SLEEP_MS || "0");
+if (argv.includes("--print-command")) {
+  process.stdout.write(process.env.ASK_NPX_PRINT_COMMAND || "");
+  process.exit(exitCode);
+}
 if (stdoutChunks) {
   let index = 0;
   const writeNext = () => {
@@ -70,6 +74,7 @@ if (stdoutChunks) {
     ASK_NPX_STDERR: process.env.ASK_NPX_STDERR,
     ASK_NPX_STDOUT: process.env.ASK_NPX_STDOUT,
     ASK_NPX_STDOUT_CHUNKS: process.env.ASK_NPX_STDOUT_CHUNKS,
+    ASK_NPX_PRINT_COMMAND: process.env.ASK_NPX_PRINT_COMMAND,
     ASK_NPX_SLEEP_MS: process.env.ASK_NPX_SLEEP_MS,
     ASK_NPX_GRANDCHILD_MARKER: process.env.ASK_NPX_GRANDCHILD_MARKER,
     ASK_NPX_GRANDCHILD_DELAY_MS: process.env.ASK_NPX_GRANDCHILD_DELAY_MS,
@@ -83,6 +88,7 @@ if (stdoutChunks) {
       ASK_NPX_STDERR: options.stderr,
       ASK_NPX_STDOUT: options.stdout,
       ASK_NPX_STDOUT_CHUNKS: options.stdoutChunks === undefined ? undefined : JSON.stringify(options.stdoutChunks),
+      ASK_NPX_PRINT_COMMAND: options.printCommand,
       ASK_NPX_SLEEP_MS: options.sleepMs === undefined ? undefined : String(options.sleepMs),
       ASK_NPX_GRANDCHILD_MARKER: options.grandchildMarker,
       ASK_NPX_GRANDCHILD_DELAY_MS: options.grandchildDelayMs === undefined ? undefined : String(options.grandchildDelayMs),

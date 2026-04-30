@@ -1,4 +1,5 @@
 interface ProgressClock {
+  readonly label?: string;
   readonly now?: () => Date;
   readonly monotonicNow?: () => number;
   readonly monotonicStartedAt?: number;
@@ -16,12 +17,14 @@ const ansi = {
 };
 
 export class ProgressFormatter {
+  private readonly label: string;
   private readonly now: () => Date;
   private readonly monotonicNow: () => number;
   private readonly monotonicStartedAt: number;
   private readonly color: boolean;
 
   constructor(options: ProgressClock = {}) {
+    this.label = options.label ?? "ask";
     this.now = options.now ?? (() => new Date());
     this.monotonicNow = options.monotonicNow ?? (() => performance.now());
     this.monotonicStartedAt = options.monotonicStartedAt ?? this.monotonicNow();
@@ -31,12 +34,12 @@ export class ProgressFormatter {
   format(message: string): string {
     const timestamp = formatClockTime(this.now());
     const elapsedSeconds = Math.max(0, this.monotonicNow() - this.monotonicStartedAt) / 1_000;
-    const prefix = `[${timestamp} +${elapsedSeconds.toFixed(1)}s] ask:`;
+    const prefix = `[${timestamp} +${elapsedSeconds.toFixed(1)}s] ${this.label}:`;
     if (!this.color) {
       return `${prefix} ${message}\n`;
     }
 
-    return `${ansi.dim}[${timestamp} +${elapsedSeconds.toFixed(1)}s]${ansi.reset} ${ansi.cyan}ask:${ansi.reset} ${message}\n`;
+    return `${ansi.dim}[${timestamp} +${elapsedSeconds.toFixed(1)}s]${ansi.reset} ${ansi.cyan}${this.label}:${ansi.reset} ${message}\n`;
   }
 }
 

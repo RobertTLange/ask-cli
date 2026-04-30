@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { run } from "../dist/cli/index.js";
@@ -8,13 +11,14 @@ import { eventually, jsonl, withEnv, withFakeNpx } from "./helpers/fake-headless
 
 test("progress formatter adds local timestamp and elapsed time", () => {
   const formatter = new ProgressFormatter({
+    label: "ask[codex-default-high]",
     color: false,
     now: () => new Date(2026, 3, 30, 12, 34, 56),
     monotonicNow: () => 1_234,
     monotonicStartedAt: 0,
   });
 
-  assert.equal(formatter.format("agent started"), "[12:34:56 +1.2s] ask: agent started\n");
+  assert.equal(formatter.format("agent started"), "[12:34:56 +1.2s] ask[codex-default-high]: agent started\n");
 });
 
 test("progress color follows TTY and environment gates", async () => {
@@ -26,6 +30,7 @@ test("progress color follows TTY and environment gates", async () => {
 
   await withEnv({ FORCE_COLOR: "1", NO_COLOR: undefined }, async () => {
     const formatter = new ProgressFormatter({
+      label: "ask[codex-default-default]",
       now: () => new Date(2026, 3, 30, 12, 34, 56),
       monotonicNow: () => 0,
       monotonicStartedAt: 0,
@@ -48,21 +53,96 @@ test("Headless progress diagnostics stream before completion", async () => {
       completed = true;
     });
 
-    await eventually(() => diagnostics.join("").includes("ask: agent started") && !completed);
+    await eventually(() => diagnostics.join("").includes("ask[codex-default-default]: agent started") && !completed, 10_000);
     const result = await runPromise;
 
     assert.equal(result.exitCode, 0);
     assert.match(result.stdout, /headless answer/);
   }, {
     stdout: jsonl([{ type: "agent_message", text: "headless answer" }]),
-    sleepMs: 1_500,
+    sleepMs: 5_000,
   });
 
   const output = diagnostics.join("");
-  assert.match(output, /ask: resolving fixture-cli-npm/);
-  assert.match(output, /ask: collecting context/);
-  assert.match(output, /ask: agent started/);
-  assert.match(output, /ask: agent finished/);
+  assert.match(output, /ask\[codex-default-default\]: resolving fixture-cli-npm/);
+  assert.match(output, /ask\[codex-default-default\]: collecting context/);
+  assert.match(output, /ask\[codex-default-default\]: agent started/);
+  assert.match(output, /ask\[codex-default-default\]: agent finished/);
+});
+
+test("Headless progress label includes agent model and reasoning", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-progress-label-"));
+  const askConfigDir = join(temp, ".ask");
+  await mkdir(askConfigDir);
+  await writeFile(
+    join(askConfigDir, "config.toml"),
+    [
+      "[agents.headless]",
+      "extraFlags = [\"--model\", \"sonnet\"]",
+      "",
+    ].join("\n"),
+  );
+
+  const diagnostics = [];
+  await withFakeNpx(async () => {
+    const result = await withEnv({ HOME: temp }, () => run([
+      "--agent",
+      "claude",
+      "--reasoning-effort",
+      "high",
+      "fixture-cli-npm",
+      "How do I enable json output?",
+    ], (text) => diagnostics.push(text)));
+
+    assert.equal(result.exitCode, 0);
+  }, {
+    stdout: jsonl([{ type: "agent_message", text: "headless answer" }]),
+  });
+
+  assert.match(diagnostics.join(""), /ask\[claude-sonnet-high\]: agent started/);
+});
+
+test("Headless progress label resolves auto agent through print command", async () => {
+  const diagnostics = [];
+  await withFakeNpx(async () => {
+    const result = await run([
+      "--reasoning-effort",
+      "high",
+      "fixture-cli-npm",
+      "How do I enable json output?",
+    ], (text) => diagnostics.push(text));
+
+    assert.equal(result.exitCode, 0);
+  }, {
+    printCommand: "printf %s prompt | codex --model gpt-5.5 --json -",
+    stdout: jsonl([{ type: "agent_message", text: "headless answer" }]),
+  });
+
+  assert.match(diagnostics.join(""), /ask\[codex-gpt-5.5-high\]: agent started/);
+  assert.doesNotMatch(diagnostics.join(""), /ask\[auto-default-high\]/);
+});
+
+test("Headless progress label reads Codex configured reasoning for auto agent", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-codex-reasoning-"));
+  const codexConfigDir = join(temp, ".codex");
+  await mkdir(codexConfigDir);
+  await writeFile(join(codexConfigDir, "config.toml"), 'model_reasoning_effort = "high"\n');
+
+  const diagnostics = [];
+  await withFakeNpx(async () => {
+    const result = await withEnv({ HOME: temp }, () => run([
+      "fixture-cli-npm",
+      "How do I enable json output?",
+    ], (text) => diagnostics.push(text)));
+
+    assert.equal(result.exitCode, 0);
+  }, {
+    printCommand: "printf %s prompt | codex --model gpt-5.5 --json -",
+    stdout: jsonl([{ type: "agent_message", text: "headless answer" }]),
+  });
+
+  assert.match(diagnostics.join(""), /ask\[codex-gpt-5.5-high\]: agent started/);
+  assert.doesNotMatch(diagnostics.join(""), /ask\[codex-gpt-5.5-default\]/);
 });
 
 test("Headless JSONL parser handles split chunks and non-JSON warnings", async () => {
@@ -113,7 +193,7 @@ test("Headless progress reports Codex-style file reads once", async () => {
     ]),
   });
 
-  assert.equal((diagnostics.join("").match(/ask: read package\/README\.md/g) ?? []).length, 1);
+  assert.equal((diagnostics.join("").match(/ask\[codex-default-default\]: read package\/README\.md/g) ?? []).length, 1);
 });
 
 test("Headless progress reports real Codex command execution records", async () => {
@@ -158,7 +238,7 @@ test("Headless progress reports real Codex command execution records", async () 
   });
 
   const output = diagnostics.join("");
-  assert.equal((output.match(/ask: run \/bin\/zsh -lc pwd/g) ?? []).length, 1);
+  assert.equal((output.match(/ask\[codex-default-default\]: run \/bin\/zsh -lc pwd/g) ?? []).length, 1);
   assert.doesNotMatch(output, /aggregated_output|Dropbox\/projects/);
 });
 
@@ -187,7 +267,7 @@ test("Headless progress reports Claude-style file reads", async () => {
     ]),
   });
 
-  assert.match(diagnostics.join(""), /ask: read ASK_CONTEXT\.md/);
+  assert.match(diagnostics.join(""), /ask\[claude-default-default\]: read ASK_CONTEXT\.md/);
 });
 
 test("Headless progress extractor summarizes provider tool calls", () => {
@@ -286,10 +366,10 @@ test("Headless progress reports run search edit and unknown tool summaries once 
   });
 
   const output = diagnostics.join("");
-  assert.equal((output.match(/ask: run npm test/g) ?? []).length, 1);
-  assert.match(output, /ask: search json output/);
-  assert.match(output, /ask: edit src\/cli\/index\.ts/);
-  assert.match(output, /ask: tool inspect_symbols/);
+  assert.equal((output.match(/ask\[gemini-default-default\]: run npm test/g) ?? []).length, 1);
+  assert.match(output, /ask\[gemini-default-default\]: search json output/);
+  assert.match(output, /ask\[gemini-default-default\]: edit src\/cli\/index\.ts/);
+  assert.match(output, /ask\[gemini-default-default\]: tool inspect_symbols/);
 });
 
 test("Headless parser joins Gemini final delta message chunks after tool use", () => {
@@ -321,15 +401,15 @@ test("Headless progress remains stderr-only for ask JSON output", async () => {
 
     assert.equal(result.exitCode, 0);
     assert.equal(JSON.parse(result.stdout).answer, "headless answer");
-    assert.doesNotMatch(result.stdout, /ask: /);
+    assert.doesNotMatch(result.stdout, /ask\[/);
   });
 
-  assert.match(diagnostics.join(""), /ask: agent started/);
+  assert.match(diagnostics.join(""), /ask\[codex-default-default\]: agent started/);
 });
 
 test("agent none and debug mode do not emit progress diagnostics", async () => {
   const none = await run(["--agent", "none", "fixture-cli-npm", "How do I enable json output?"]);
-  assert.doesNotMatch(none.stderr ?? "", /ask:/);
+  assert.doesNotMatch(none.stderr ?? "", /ask\[/);
 
   const diagnostics = [];
   await withFakeNpx(async () => {
@@ -348,5 +428,5 @@ test("agent none and debug mode do not emit progress diagnostics", async () => {
 
   const output = diagnostics.join("");
   assert.match(output, /----- ask agent trace -----/);
-  assert.doesNotMatch(output, /\[[0-9]{2}:[0-9]{2}:[0-9]{2} \+[0-9.]+s\] ask:/);
+  assert.doesNotMatch(output, /\[[0-9]{2}:[0-9]{2}:[0-9]{2} \+[0-9.]+s\] ask\[/);
 });
