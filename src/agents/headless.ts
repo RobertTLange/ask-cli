@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { extractToolProgressEvents, HeadlessJsonStream } from "./headless-json.js";
 import type { Agent, AgentEvent, AgentRequest } from "../types.js";
 
 export type HeadlessBackend = "codex" | "claude" | "cursor" | "gemini" | "opencode" | "pi";
@@ -58,8 +59,8 @@ function headlessCommand(
   const args = [
     ...(usesNpx ? ["-y", "@roberttlange/headless"] : []),
     ...(backend ? [backend] : []),
-    ...(req.debug ? ["--debug"] : []),
-    ...(req.usage ? ["--usage"] : []),
+    ...(req.debug ? ["--debug"] : ["--json"]),
+    ...(req.debug && req.usage ? ["--usage"] : []),
     ...(req.reasoningEffort ? ["--reasoning-effort", req.reasoningEffort] : []),
     "--allow",
     "read-only",
@@ -83,6 +84,7 @@ async function* streamHeadless(
 ): AsyncIterable<AgentEvent> {
   type QueueEvent =
     | { readonly type: "agent_trace"; readonly text: string }
+    | { readonly type: "progress"; readonly message: string }
     | { readonly type: "close"; readonly exitCode: number };
 
   const queue: QueueEvent[] = [];
@@ -115,6 +117,8 @@ async function* streamHeadless(
   let settled = false;
   let pendingDebugTrace = "";
   let reachedFinalMessage = false;
+  const jsonStream = new HeadlessJsonStream();
+  const reportedToolSummaries = new Set<string>();
   try {
     child = spawn(command.command, command.args, {
       cwd: req.workspacePath,
@@ -130,6 +134,25 @@ async function* streamHeadless(
     const pushDebugTrace = (text: string): void => {
       for (const chunk of headlessDebugTraceChunks(text)) {
         pushQueue({ type: "agent_trace", text: chunk });
+      }
+    };
+    const pushProgress = (message: string): void => {
+      if (!req.debug) {
+        pushQueue({ type: "progress", message });
+      }
+    };
+    const handleJsonRecords = (records: unknown[]): void => {
+      for (const record of records) {
+        for (const event of extractToolProgressEvents(record)) {
+          if (shouldDeduplicateToolSummary(event.operation) && reportedToolSummaries.has(event.text)) {
+            continue;
+          }
+
+          if (shouldDeduplicateToolSummary(event.operation)) {
+            reportedToolSummaries.add(event.text);
+          }
+          pushProgress(event.text);
+        }
       }
     };
     const flushDebugTrace = (): void => {
@@ -163,6 +186,8 @@ async function* streamHeadless(
       stdout += text;
       if (req.debug) {
         pushDebugTrace(text);
+      } else {
+        handleJsonRecords(jsonStream.push(text));
       }
     });
     child.stderr?.on("data", (chunk) => {
@@ -173,12 +198,24 @@ async function* streamHeadless(
       spawnErrorMessage = error.message;
       finish(127);
     });
-    child.on("close", (code) => finish(code ?? 1));
+    child.on("close", (code) => {
+      if (!req.debug) {
+        handleJsonRecords(jsonStream.finish());
+        pushProgress("agent finished");
+      }
+      finish(code ?? 1);
+    });
+
+    pushProgress("agent started");
 
     let exitCode = 1;
     while (true) {
       const event = await nextQueueEvent();
       if (event.type === "agent_trace") {
+        yield event;
+        continue;
+      }
+      if (event.type === "progress") {
         yield event;
         continue;
       }
@@ -214,7 +251,13 @@ async function* streamHeadless(
         const output = splitHeadlessDebugOutput(stdout);
         yield { type: "text", text: output.answer || stdout };
       } else {
-        yield { type: "text", text: stdout };
+        const finalAnswer = jsonStream.finalAnswer(backend);
+        const usage = req.usage ? jsonStream.usage() : undefined;
+        const text = finalAnswer || (jsonStream.trace() ? "" : stdout);
+        yield {
+          type: "text",
+          text: usage === undefined ? text : `${text.trimEnd()}\n${JSON.stringify({ usage })}\n`,
+        };
       }
     }
     yield { type: "done", exitCode };
@@ -271,6 +314,10 @@ function killProcessGroup(pid: number | undefined, signal: NodeJS.Signals): void
       return;
     }
   }
+}
+
+function shouldDeduplicateToolSummary(operation: string): boolean {
+  return operation === "read" || operation === "search" || operation === "run";
 }
 
 function splitHeadlessDebugOutput(stdout: string): {

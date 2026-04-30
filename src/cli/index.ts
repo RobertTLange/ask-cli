@@ -3,6 +3,7 @@ import { ConfigError, loadConfig } from "./config.js";
 import { parseInvocation, UsageError, type ParsedInvocation } from "./args.js";
 import { collectContext } from "../collectors/context.js";
 import { defaultLimits } from "../collectors/limits.js";
+import { ProgressFormatter } from "./progress.js";
 import { AgentError, HeadlessAgent, type HeadlessBackend } from "../agents/headless.js";
 import { NoneAgent } from "../agents/none.js";
 import { buildAgentPrompt } from "../agents/prompt.js";
@@ -96,6 +97,13 @@ async function runQuestion(
   emitDiagnostic: DiagnosticWriter,
 ): Promise<RunResult> {
   const trace = new Trace();
+  const progress = new ProgressFormatter();
+  const emitProgress = (message: string): void => emitDiagnostic(progress.format(message));
+  const headlessProgressEnabled = invocation.config.agent !== "none" && !invocation.config.debug;
+  if (headlessProgressEnabled) {
+    emitProgress(`resolving ${invocation.command}`);
+  }
+
   const locateStartedAt = performance.now();
   const located = await locateExecutable(invocation.command);
   trace.record({
@@ -138,6 +146,10 @@ async function runQuestion(
     details: { key: cacheKey },
   });
 
+  if (headlessProgressEnabled) {
+    emitProgress("collecting context");
+  }
+
   const bundle = cachedBundle ?? await collectContext(resolution, {
     ...defaultLimits,
     maxFiles: invocation.config.maxFiles,
@@ -168,6 +180,9 @@ async function runQuestion(
 
   try {
     staged = await stageWorkspace(bundle, { question: invocation.question });
+    if (headlessProgressEnabled && invocation.config.keepWorkspace) {
+      emitProgress(`staged workspace ${staged.path}`);
+    }
     await cache.storeWorkspace(cacheKey, staged.path);
     await cache.evict(512);
     const prompt = buildAgentPrompt({
@@ -195,7 +210,7 @@ async function runQuestion(
       debug: invocation.config.debug,
       usage: invocation.config.usage,
       reasoningEffort: invocation.config.reasoningEffort,
-    }), invocation.config.debug ? emitDiagnostic : undefined);
+    }), headlessProgressEnabled || invocation.config.debug ? emitDiagnostic : undefined, progress);
 
     await releaseStaged();
     const parsedAnswer = splitUsageAnswer(answer.text, invocation.config.usage);
@@ -300,7 +315,8 @@ function withBufferedDiagnostics(result: RunResult, diagnostics: string): RunRes
 
 async function collectAgentAnswer(
   events: AsyncIterable<import("../types.js").AgentEvent>,
-  emitAgentTrace?: DiagnosticWriter,
+  emitAgentDiagnostic?: DiagnosticWriter,
+  progress?: ProgressFormatter,
 ): Promise<{
   readonly text: string;
   readonly trace: string;
@@ -318,14 +334,17 @@ async function collectAgentAnswer(
     }
     if (event.type === "agent_trace") {
       trace += event.text;
-      if (emitAgentTrace) {
+      if (emitAgentDiagnostic) {
         if (!traceOpen) {
-          emitAgentTrace("----- ask agent trace -----\n");
+          emitAgentDiagnostic("----- ask agent trace -----\n");
           traceOpen = true;
         }
-        emitAgentTrace(event.text);
+        emitAgentDiagnostic(event.text);
         lastTraceEndedWithNewline = event.text.endsWith("\n");
       }
+    }
+    if (event.type === "progress" && emitAgentDiagnostic) {
+      emitAgentDiagnostic((progress ?? new ProgressFormatter()).format(event.message));
     }
     if (event.type === "error" && event.fatal) {
       text += event.message;
@@ -336,8 +355,8 @@ async function collectAgentAnswer(
     }
   }
 
-  if (traceOpen && emitAgentTrace) {
-    emitAgentTrace(`${lastTraceEndedWithNewline ? "" : "\n"}----- end ask agent trace -----\n\n`);
+  if (traceOpen && emitAgentDiagnostic) {
+    emitAgentDiagnostic(`${lastTraceEndedWithNewline ? "" : "\n"}----- end ask agent trace -----\n\n`);
   }
 
   return { text, trace, exitCode };
