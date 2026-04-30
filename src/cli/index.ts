@@ -1,8 +1,13 @@
+import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { helpText, packageVersion, exitCodes } from "./constants.js";
 import { ConfigError, loadConfig } from "./config.js";
 import { parseInvocation, UsageError, type ParsedInvocation } from "./args.js";
 import { collectContext } from "../collectors/context.js";
 import { defaultLimits } from "../collectors/limits.js";
+import { ProgressFormatter } from "./progress.js";
 import { AgentError, HeadlessAgent, type HeadlessBackend } from "../agents/headless.js";
 import { NoneAgent } from "../agents/none.js";
 import { buildAgentPrompt } from "../agents/prompt.js";
@@ -96,6 +101,15 @@ async function runQuestion(
   emitDiagnostic: DiagnosticWriter,
 ): Promise<RunResult> {
   const trace = new Trace();
+  const headlessProgressEnabled = invocation.config.agent !== "none" && !invocation.config.debug;
+  const progress = new ProgressFormatter({
+    label: headlessProgressEnabled ? await progressLabel(invocation) : progressLabelFromConfig(invocation),
+  });
+  const emitProgress = (message: string): void => emitDiagnostic(progress.format(message));
+  if (headlessProgressEnabled) {
+    emitProgress(`resolving ${invocation.command}`);
+  }
+
   const locateStartedAt = performance.now();
   const located = await locateExecutable(invocation.command);
   trace.record({
@@ -138,6 +152,10 @@ async function runQuestion(
     details: { key: cacheKey },
   });
 
+  if (headlessProgressEnabled) {
+    emitProgress("collecting context");
+  }
+
   const bundle = cachedBundle ?? await collectContext(resolution, {
     ...defaultLimits,
     maxFiles: invocation.config.maxFiles,
@@ -168,6 +186,9 @@ async function runQuestion(
 
   try {
     staged = await stageWorkspace(bundle, { question: invocation.question });
+    if (headlessProgressEnabled && invocation.config.keepWorkspace) {
+      emitProgress(`staged workspace ${staged.path}`);
+    }
     await cache.storeWorkspace(cacheKey, staged.path);
     await cache.evict(512);
     const prompt = buildAgentPrompt({
@@ -195,7 +216,7 @@ async function runQuestion(
       debug: invocation.config.debug,
       usage: invocation.config.usage,
       reasoningEffort: invocation.config.reasoningEffort,
-    }), invocation.config.debug ? emitDiagnostic : undefined);
+    }), headlessProgressEnabled || invocation.config.debug ? emitDiagnostic : undefined, progress);
 
     await releaseStaged();
     const parsedAnswer = splitUsageAnswer(answer.text, invocation.config.usage);
@@ -242,6 +263,143 @@ function headlessBackend(agent: ParsedInvocation["config"]["agent"]): HeadlessBa
   }
 
   return agent;
+}
+
+async function progressLabel(invocation: ParsedInvocation): Promise<string> {
+  if (invocation.config.agent !== "auto") {
+    return progressLabelFromConfig(invocation);
+  }
+
+  const resolved = await resolveHeadlessAutoIdentity(invocation);
+  return progressLabelFromParts({
+    agent: resolved.agent ?? invocation.config.agent,
+    model: resolved.model ?? headlessModel(invocation.config.headlessExtraFlags),
+    reasoningEffort: invocation.config.reasoningEffort ?? resolved.reasoningEffort,
+  });
+}
+
+function progressLabelFromConfig(invocation: ParsedInvocation): string {
+  return progressLabelFromParts({
+    agent: invocation.config.agent,
+    model: headlessModel(invocation.config.headlessExtraFlags),
+    reasoningEffort: invocation.config.reasoningEffort,
+  });
+}
+
+function progressLabelFromParts(parts: {
+  readonly agent: string;
+  readonly model: string;
+  readonly reasoningEffort?: string;
+}): string {
+  return `ask[${[
+    parts.agent,
+    parts.model,
+    parts.reasoningEffort ?? "default",
+  ].map(sanitizeProgressLabelPart).join("-")}]`;
+}
+
+async function resolveHeadlessAutoIdentity(invocation: ParsedInvocation): Promise<{
+  readonly agent?: string;
+  readonly model?: string;
+  readonly reasoningEffort?: string;
+}> {
+  const usesNpx = !invocation.config.headlessPath;
+  const command = invocation.config.headlessPath || "npx";
+  const args = [
+    ...(usesNpx ? ["-y", "@roberttlange/headless"] : []),
+    "--print-command",
+    ...(invocation.config.reasoningEffort ? ["--reasoning-effort", invocation.config.reasoningEffort] : []),
+    "--allow",
+    "read-only",
+    "--work-dir",
+    process.cwd(),
+    "--prompt",
+    "identity",
+    ...invocation.config.headlessExtraFlags,
+  ];
+
+  const resolved = parseHeadlessPrintCommand(await runHeadlessPrintCommand(command, args));
+  return {
+    ...resolved,
+    reasoningEffort: resolved.reasoningEffort ?? await configuredReasoningEffort(resolved.agent),
+  };
+}
+
+function runHeadlessPrintCommand(command: string, args: readonly string[]): Promise<string> {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      cwd: process.cwd(),
+      shell: false,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    let stdout = "";
+    let settled = false;
+    const settle = (output: string): void => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      clearTimeout(timeout);
+      resolve(output);
+    };
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      settle("");
+    }, 2_000);
+    timeout.unref();
+
+    child.stdout?.on("data", (chunk) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.on("error", () => settle(""));
+    child.on("close", (code) => settle(code === 0 ? stdout : ""));
+  });
+}
+
+function parseHeadlessPrintCommand(command: string): {
+  readonly agent?: string;
+  readonly model?: string;
+  readonly reasoningEffort?: string;
+} {
+  const agentMatch = command.match(/(?:^|\|\s*)(codex|claude|cursor|gemini|opencode|pi)\b/);
+  const modelMatch = command.match(/(?:^|\s)--model(?:=|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))/);
+  const reasoningMatch = command.match(/model_reasoning_effort\s*=\s*\\?["']?([A-Za-z0-9_-]+)/);
+  return {
+    agent: agentMatch?.[1],
+    model: modelMatch?.[1] ?? modelMatch?.[2] ?? modelMatch?.[3],
+    reasoningEffort: reasoningMatch?.[1],
+  };
+}
+
+async function configuredReasoningEffort(agent: string | undefined): Promise<string | undefined> {
+  if (agent !== "codex") {
+    return undefined;
+  }
+
+  const home = process.env.HOME || homedir();
+  const config = await readFile(join(home, ".codex", "config.toml"), "utf8").catch(() => "");
+  return config.match(/^\s*model_reasoning_effort\s*=\s*["']?([A-Za-z0-9_-]+)/m)?.[1];
+}
+
+function headlessModel(flags: readonly string[]): string {
+  for (let index = 0; index < flags.length; index += 1) {
+    const flag = flags[index];
+    if (flag === "--model") {
+      return flags[index + 1] ?? "default";
+    }
+
+    if (flag.startsWith("--model=")) {
+      return flag.slice("--model=".length) || "default";
+    }
+  }
+
+  return "default";
+}
+
+function sanitizeProgressLabelPart(value: string): string {
+  const normalized = value.replace(/[^A-Za-z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "");
+  return normalized || "default";
 }
 
 function splitUsageAnswer(answer: string, usageEnabled: boolean): {
@@ -300,7 +458,8 @@ function withBufferedDiagnostics(result: RunResult, diagnostics: string): RunRes
 
 async function collectAgentAnswer(
   events: AsyncIterable<import("../types.js").AgentEvent>,
-  emitAgentTrace?: DiagnosticWriter,
+  emitAgentDiagnostic?: DiagnosticWriter,
+  progress?: ProgressFormatter,
 ): Promise<{
   readonly text: string;
   readonly trace: string;
@@ -318,14 +477,17 @@ async function collectAgentAnswer(
     }
     if (event.type === "agent_trace") {
       trace += event.text;
-      if (emitAgentTrace) {
+      if (emitAgentDiagnostic) {
         if (!traceOpen) {
-          emitAgentTrace("----- ask agent trace -----\n");
+          emitAgentDiagnostic("----- ask agent trace -----\n");
           traceOpen = true;
         }
-        emitAgentTrace(event.text);
+        emitAgentDiagnostic(event.text);
         lastTraceEndedWithNewline = event.text.endsWith("\n");
       }
+    }
+    if (event.type === "progress" && emitAgentDiagnostic) {
+      emitAgentDiagnostic((progress ?? new ProgressFormatter()).format(event.message));
     }
     if (event.type === "error" && event.fatal) {
       text += event.message;
@@ -336,8 +498,8 @@ async function collectAgentAnswer(
     }
   }
 
-  if (traceOpen && emitAgentTrace) {
-    emitAgentTrace(`${lastTraceEndedWithNewline ? "" : "\n"}----- end ask agent trace -----\n\n`);
+  if (traceOpen && emitAgentDiagnostic) {
+    emitAgentDiagnostic(`${lastTraceEndedWithNewline ? "" : "\n"}----- end ask agent trace -----\n\n`);
   }
 
   return { text, trace, exitCode };

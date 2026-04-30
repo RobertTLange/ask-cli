@@ -85,6 +85,7 @@ export interface AgentRequest {
 export type AgentEvent =
   | { readonly type: "text"; readonly text: string }
   | { readonly type: "agent_trace"; readonly text: string }
+  | { readonly type: "progress"; readonly message: string }
   | {
       readonly type: "citation";
       readonly path: string;

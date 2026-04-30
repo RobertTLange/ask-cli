@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, lstat, mkdir, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -65,6 +65,71 @@ test("workspace staging creates the shared temp root before locking", async () =
     restoreEnv("TMP", originalTmpdirEnv.TMP);
     restoreEnv("TEMP", originalTmpdirEnv.TEMP);
     await staged?.cleanup();
+  }
+});
+
+test("workspace staging removes stale lock directories", async () => {
+  const bundle = await npmFixtureBundle();
+  const staged = await stageWorkspace(bundle, { question: "find path" });
+  const lockPath = `${staged.path}.lock`;
+  await staged.cleanup();
+
+  await mkdir(lockPath, { recursive: true });
+  const oldDate = new Date(Date.now() - 120_000);
+  await utimes(lockPath, oldDate, oldDate);
+
+  const restaged = await stageWorkspace(bundle, { question: "stale lock?" });
+  try {
+    await access(restaged.path, fsConstants.F_OK);
+  } finally {
+    await restaged.cleanup();
+    await rm(lockPath, { recursive: true, force: true });
+  }
+});
+
+test("workspace staging preserves stale-looking locks owned by a live process", async () => {
+  const bundle = await npmFixtureBundle();
+  const staged = await stageWorkspace(bundle, { question: "live lock?" });
+  const lockPath = `${staged.path}.lock`;
+  const oldDate = new Date(Date.now() - 120_000);
+  await utimes(lockPath, oldDate, oldDate);
+
+  let restaged;
+  const restagePromise = stageWorkspace(bundle, { question: "wait for live lock?" }).then((value) => {
+    restaged = value;
+    return value;
+  });
+  const firstResult = await Promise.race([
+    restagePromise.then(() => "resolved"),
+    delay(250).then(() => "waiting"),
+  ]);
+
+  try {
+    assert.equal(firstResult, "waiting");
+  } finally {
+    await staged.cleanup();
+  }
+
+  restaged = await restagePromise;
+  await restaged.cleanup();
+});
+
+test("workspace staging removes orphaned legacy lock directories quickly", async () => {
+  const bundle = await npmFixtureBundle();
+  const staged = await stageWorkspace(bundle, { question: "find path" });
+  const lockPath = `${staged.path}.lock`;
+  await staged.cleanup();
+
+  await mkdir(lockPath, { recursive: true });
+  const oldDate = new Date(Date.now() - 5_000);
+  await utimes(lockPath, oldDate, oldDate);
+
+  const restaged = await stageWorkspace(bundle, { question: "orphan lock?" });
+  try {
+    await access(restaged.path, fsConstants.F_OK);
+  } finally {
+    await restaged.cleanup();
+    await rm(lockPath, { recursive: true, force: true });
   }
 });
 
@@ -229,4 +294,8 @@ function restoreEnv(name, value) {
   }
 
   process.env[name] = value;
+}
+
+async function delay(ms) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
