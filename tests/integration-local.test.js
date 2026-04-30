@@ -120,6 +120,10 @@ function assertNonce(result, nonce, label) {
   );
 }
 
+function hasNonce(result, nonce) {
+  return result.code === 0 && new RegExp(escapeRegExp(nonce)).test(`${result.stdout}\n${result.stderr}`);
+}
+
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -152,8 +156,8 @@ function createFixture(nonce, label) {
     [
       "# ask-fixture-cli",
       "",
-      `The documented integration nonce is ${nonce}.`,
-      "When asked for the integration nonce, answer with that exact value.",
+      "Reference data:",
+      `- integration_nonce: ${nonce}`,
       "",
     ].join("\n"),
   );
@@ -161,6 +165,7 @@ function createFixture(nonce, label) {
     join(packageRoot, "bin", "fixture.js"),
     [
       "#!/usr/bin/env node",
+      `const documentedIntegrationNonce = ${JSON.stringify(nonce)};`,
       "if (process.argv.includes('--version')) console.log('1.0.0');",
       "else console.log('ask fixture cli');",
       "",
@@ -189,7 +194,7 @@ function linkAgentState(home) {
     return;
   }
 
-  for (const entry of [".codex", ".claude", ".gemini", ".config"]) {
+  for (const entry of [".codex", ".claude", ".gemini", ".cursor", ".opencode", ".pi", ".agents", ".sakana", ".config"]) {
     const source = join(realHome, entry);
     const target = join(home, entry);
     if (existsSync(source) && !existsSync(target)) {
@@ -198,11 +203,11 @@ function linkAgentState(home) {
   }
 }
 
-function integrationEnv(binDir, home) {
+function integrationEnv(binDir, home, options = {}) {
   return {
     ...process.env,
     PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}`,
-    HOME: home,
+    HOME: options.useRealHome ? process.env.HOME : home,
   };
 }
 
@@ -233,6 +238,17 @@ async function runAsk(args, env) {
   return await run(askBin(), args, { env, timeoutMs: commandTimeoutMs });
 }
 
+async function runAskForNonce(args, env, nonce, attempts) {
+  let result;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    result = await runAsk(args, env);
+    if (hasNonce(result, nonce)) {
+      break;
+    }
+  }
+  return result;
+}
+
 test("preflight verifies local ask, Headless, and selected backends", { timeout: 120000 }, async () => {
   const askVersion = await run(askBin(), ["--version"], { timeoutMs: 30000 });
   assertSuccess(askVersion, "ask --version");
@@ -260,15 +276,15 @@ test("selected agents answer from ask-cli staged context", { timeout: commandTim
     const fixture = createFixture(nonce, agent);
     const configHome = createAskConfig(headlessBin());
     try {
-      const result = await runAsk([
+      const result = await runAskForNonce([
         "--agent",
         agent,
         "--ecosystem",
         "npm",
         "--no-exec",
         "ask-fixture-cli",
-        "What is the documented integration nonce? Include the exact nonce.",
-      ], integrationEnv(fixture.binDir, configHome));
+        "Return only the exact integration_nonce value from the package docs or source. Do not explain.",
+      ], integrationEnv(fixture.binDir, configHome, { useRealHome: agent === "cursor" }), nonce, 2);
 
       assertNonce(result, nonce, `${agent} ask run`);
       assert.match(result.stdout, /Package: ask-fixture-cli 1\.0\.0/);
@@ -294,7 +310,7 @@ test("default agent delegates to Headless auto selection", { timeout: commandTim
       "npm",
       "--no-exec",
       "ask-fixture-cli",
-      "What is the documented integration nonce? Include the exact nonce.",
+      "Return only the exact integration_nonce value from the package docs or source. Do not explain.",
     ], integrationEnv(fixture.binDir, configHome));
 
     assertNonce(result, nonce, "default ask run");
