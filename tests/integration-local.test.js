@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
@@ -175,11 +175,27 @@ function createAskConfig(headlessPath) {
   const home = mkdtempSync(join(tmpdir(), "ask-home-"));
   const configDir = join(home, ".ask");
   mkdirSync(configDir, { recursive: true });
+  linkAgentState(home);
   writeFileSync(
     join(configDir, "config.toml"),
     ["[agents.headless]", `path = ${JSON.stringify(headlessPath)}`, ""].join("\n"),
   );
   return home;
+}
+
+function linkAgentState(home) {
+  const realHome = process.env.HOME;
+  if (!realHome || realHome === home) {
+    return;
+  }
+
+  for (const entry of [".codex", ".claude", ".gemini", ".config"]) {
+    const source = join(realHome, entry);
+    const target = join(home, entry);
+    if (existsSync(source) && !existsSync(target)) {
+      symlinkSync(source, target, "dir");
+    }
+  }
 }
 
 function integrationEnv(binDir, home) {
@@ -188,6 +204,29 @@ function integrationEnv(binDir, home) {
     PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}`,
     HOME: home,
   };
+}
+
+function rmWritable(path) {
+  chmodWritable(path);
+  rmSync(path, { force: true, recursive: true });
+}
+
+function chmodWritable(path) {
+  try {
+    const entry = lstatSync(path);
+    if (entry.isSymbolicLink()) {
+      return;
+    }
+    chmodSync(path, entry.isDirectory() ? 0o755 : 0o644);
+    if (!entry.isDirectory()) {
+      return;
+    }
+    for (const child of readdirSync(path)) {
+      chmodWritable(join(path, child));
+    }
+  } catch {
+    // Best-effort cleanup for paths that may not exist after a failed run.
+  }
 }
 
 async function runAsk(args, env) {
@@ -205,9 +244,11 @@ test("preflight verifies local ask, Headless, and selected backends", { timeout:
   const check = await run(headlessBin(), ["--check"], { timeoutMs: 120000 });
   assertSuccess(check, "headless --check");
   for (const agent of selectedAgents) {
+    const oldRow = new RegExp(`^${agent}\\s+✓\\s+`, "m");
+    const tableRow = new RegExp(`\\|\\s*${agent}\\s*\\|\\s*✓\\s*\\|`);
     assert.match(
       check.stdout,
-      new RegExp(`^${agent}\\s+✓\\s+`, "m"),
+      oldRow.test(check.stdout) ? oldRow : tableRow,
       `missing ${agent} backend in \`headless --check\`; install and authenticate selected backends`,
     );
   }
@@ -232,8 +273,8 @@ test("selected agents answer from ask-cli staged context", { timeout: commandTim
       assertNonce(result, nonce, `${agent} ask run`);
       assert.match(result.stdout, /Package: ask-fixture-cli 1\.0\.0/);
     } finally {
-      rmSync(fixture.root, { force: true, recursive: true });
-      rmSync(configHome, { force: true, recursive: true });
+      rmWritable(fixture.root);
+      rmWritable(configHome);
     }
   }
 });
@@ -259,7 +300,7 @@ test("default agent delegates to Headless auto selection", { timeout: commandTim
     assertNonce(result, nonce, "default ask run");
     assert.match(result.stdout, /Package: ask-fixture-cli 1\.0\.0/);
   } finally {
-    rmSync(fixture.root, { force: true, recursive: true });
-    rmSync(configHome, { force: true, recursive: true });
+    rmWritable(fixture.root);
+    rmWritable(configHome);
   }
 });
