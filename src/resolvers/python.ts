@@ -2,6 +2,7 @@ import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { runSandbox } from "../sandbox.js";
 import type { LocatedExecutable, Resolution } from "../types.js";
+import { resolveLocalWrapperTarget } from "./wrappers.js";
 
 interface PythonCandidate {
   readonly packageName: string;
@@ -44,6 +45,11 @@ print(json.dumps(matches))
 `;
 
 export async function resolvePythonPackage(located: LocatedExecutable): Promise<Resolution> {
+  const wrapperResolution = await resolvePythonWrapper(located);
+  if (wrapperResolution) {
+    return wrapperResolution;
+  }
+
   const tierA = await resolveWithIntrospection(located);
   const tierB = await resolveWithDistInfo(located);
   const warnings = disagreementWarnings(tierA, tierB);
@@ -67,6 +73,29 @@ export async function resolvePythonPackage(located: LocatedExecutable): Promise<
     confidence: selected.confidence,
     warnings,
     shim: located.shim,
+  };
+}
+
+async function resolvePythonWrapper(located: LocatedExecutable): Promise<Resolution | null> {
+  const target = await resolveLocalWrapperTarget(located.realPath);
+  if (!target) {
+    return null;
+  }
+
+  const resolution = await resolvePythonPackage({
+    ...located,
+    path: target,
+    realPath: target,
+  });
+  if (!resolution.packageName) {
+    return null;
+  }
+
+  return {
+    ...resolution,
+    executablePath: located.path,
+    executableRealPath: target,
+    warnings: [...resolution.warnings, "Resolved package metadata through local wrapper script"],
   };
 }
 

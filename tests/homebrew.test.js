@@ -14,11 +14,19 @@ test("homebrew resolver derives formula metadata from Cellar realpath", async ()
   const prefix = await mkdtemp(join(tmpdir(), "ask-homebrew-"));
   const packageRoot = join(prefix, "Cellar", "wget", "1.21.4");
   const binDir = join(packageRoot, "bin");
+  const docDir = join(packageRoot, "share", "doc", "wget");
+  const manDir = join(packageRoot, "share", "man", "man1");
   await mkdir(binDir, { recursive: true });
+  await mkdir(docDir, { recursive: true });
+  await mkdir(manDir, { recursive: true });
   const executable = join(binDir, "wget");
   const receipt = join(packageRoot, "INSTALL_RECEIPT.json");
+  const docs = join(docDir, "README.md");
+  const manpage = join(manDir, "wget.1");
 
   await writeFile(receipt, JSON.stringify({ source: { tap: "homebrew/core" } }));
+  await writeFile(docs, "Wget docs\n");
+  await writeFile(manpage, ".TH wget 1\n");
   await writeFile(executable, "binary-ish");
   await chmod(executable, 0o755);
 
@@ -34,6 +42,8 @@ test("homebrew resolver derives formula metadata from Cellar realpath", async ()
   assert.equal(resolution.entryFile, null);
   const realReceipt = await realpath(receipt);
   assert.ok(bundle.files.some((file) => file.path === realReceipt));
+  assert.ok(resolution.metadataFiles.includes(await realpath(docs)));
+  assert.ok(resolution.metadataFiles.includes(await realpath(manpage)));
 });
 
 test("homebrew resolver keeps script entry files for wrapper CLIs", async () => {

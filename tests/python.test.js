@@ -55,6 +55,42 @@ test("python resolver roots native wheel binaries from RECORD", async () => {
   ].sort());
 });
 
+test("python resolver scans pipx uv rye style venv layouts", async () => {
+  for (const layout of [
+    ["pipx", "venvs", "venv-tool"],
+    ["uv", "tools", "venv-tool"],
+    [".rye", "tools", "venv-tool"],
+  ]) {
+    const fixture = await createVenvFixture(layout);
+    const located = await locateExecutable(fixture.executable, { env: { PATH: "", SHELL: "/missing-shell" } });
+    const resolution = await resolvePythonPackage({ ...located, command: "venv-tool" });
+
+    assert.equal(resolution.packageName, "venv-tool");
+    assert.equal(resolution.version, "0.2.0");
+    assert.match(resolution.packageRoot, /venv_tool$/);
+    assert.match(resolution.entryFile, /venv_tool\/cli\.py$/);
+  }
+});
+
+test("python resolver follows local python wrapper scripts to dist metadata", async () => {
+  const fixture = await createVenvFixture(["wrapped"]);
+  const wrapper = join(fixture.temp, "bin", "wrapped-tool");
+  await mkdir(join(fixture.temp, "bin"), { recursive: true });
+  await writeFile(wrapper, [
+    "#!/usr/bin/env python3",
+    "import os, sys",
+    `os.execv(${JSON.stringify(fixture.executable)}, [${JSON.stringify(fixture.executable)}] + sys.argv[1:])`,
+    "",
+  ].join("\n"));
+  await chmod(wrapper, 0o755);
+
+  const located = await locateExecutable(wrapper, { env: { PATH: "", SHELL: "/missing-shell" } });
+  const resolution = await resolvePythonPackage({ ...located, command: "venv-tool" });
+
+  assert.equal(resolution.packageName, "venv-tool");
+  assert.match(resolution.warnings.join("; "), /wrapper script/);
+});
+
 test("CLI auto fallback upgrades native Python wheel binaries", async () => {
   const fixture = await createNativeWheelFixture();
   const originalPath = process.env.PATH;
@@ -138,6 +174,36 @@ async function createNativeWheelFixture() {
     "native_py_cli/__main__.py,sha256=fake,16",
     "native_py_cli-1.2.3.dist-info/METADATA,sha256=fake,42",
     "native_py_cli-1.2.3.dist-info/RECORD,,",
+    "",
+  ].join("\n"));
+
+  return { temp, executable, packageRoot, distInfo };
+}
+
+async function createVenvFixture(layout) {
+  const temp = await mkdtemp(join(tmpdir(), "ask-python-venv-"));
+  const venvRoot = join(temp, ...layout);
+  const executable = join(venvRoot, "bin", "venv-tool");
+  const sitePackages = join(venvRoot, "lib", "python3.12", "site-packages");
+  const packageRoot = join(sitePackages, "venv_tool");
+  const distInfo = join(sitePackages, "venv_tool-0.2.0.dist-info");
+
+  await mkdir(join(venvRoot, "bin"), { recursive: true });
+  await mkdir(packageRoot, { recursive: true });
+  await mkdir(distInfo, { recursive: true });
+  await writeFile(executable, "#!/usr/bin/env python3\n");
+  await chmod(executable, 0o755);
+  await writeFile(join(packageRoot, "__init__.py"), "");
+  await writeFile(join(packageRoot, "cli.py"), "def main(): pass\n");
+  await writeFile(join(distInfo, "METADATA"), "Name: venv-tool\nVersion: 0.2.0\n");
+  await writeFile(join(distInfo, "entry_points.txt"), "[console_scripts]\nvenv-tool = venv_tool.cli:main\n");
+  await writeFile(join(distInfo, "RECORD"), [
+    "../../../bin/venv-tool,sha256=fake,10",
+    "venv_tool/__init__.py,sha256=fake,0",
+    "venv_tool/cli.py,sha256=fake,16",
+    "venv_tool-0.2.0.dist-info/METADATA,sha256=fake,42",
+    "venv_tool-0.2.0.dist-info/entry_points.txt,sha256=fake,42",
+    "venv_tool-0.2.0.dist-info/RECORD,,",
     "",
   ].join("\n"));
 
