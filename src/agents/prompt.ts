@@ -28,6 +28,8 @@ Rules:
 - Do not modify files, execute package code, install dependencies, or access the network.
 - Do not read files outside the workspace.
 - Prefer primary sources: help output, parser source, tests, README.
+- If confidence is low, context is truncated, or warnings are present, lead with
+  those limitations before giving the answer.
 - Cite file paths relative to the workspace, with line ranges when you can
   identify a specific span.
 - If the answer is not determinable from the workspace, say so and state

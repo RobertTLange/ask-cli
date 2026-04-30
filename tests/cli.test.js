@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -249,3 +249,105 @@ test("help documents verbose prompt output", async () => {
 
   assert.match(result.stdout, /--verbose\s+print the exact prompt sent to the agent to stderr/);
 });
+
+test("--executable locates an explicit file while preserving command name", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-cli-executable-"));
+  const packageRoot = join(temp, "pkg");
+  const binDir = join(packageRoot, "bin");
+  await mkdir(binDir, { recursive: true });
+  const executable = join(binDir, "renamed-entry.js");
+  await writeFile(join(packageRoot, "package.json"), JSON.stringify({
+    name: "explicit-tool",
+    version: "1.2.3",
+    bin: { "public-tool": "bin/renamed-entry.js" },
+  }));
+  await writeFile(executable, "#!/usr/bin/env node\nconsole.log('explicit')\n");
+  await chmod(executable, 0o755);
+
+  const result = await run([
+    "--agent",
+    "none",
+    "--ecosystem",
+    "npm",
+    "--no-exec",
+    "--refresh",
+    "--executable",
+    executable,
+    "public-tool",
+    "How do I use it?",
+  ]);
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, /Command: public-tool/);
+  assert.match(result.stdout, /Package: explicit-tool 1\.2\.3/);
+  assert.match(result.stdout, /Entry file: .*renamed-entry\.js/);
+});
+
+test("--package-root overrides collection root and lowers disagreeing confidence", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-cli-package-root-"));
+  const packageRoot = join(temp, "pkg");
+  const overrideRoot = join(temp, "override");
+  const binDir = join(packageRoot, "bin");
+  await mkdir(binDir, { recursive: true });
+  await mkdir(overrideRoot);
+  const executable = join(binDir, "tool.js");
+  await writeFile(join(packageRoot, "package.json"), JSON.stringify({
+    name: "rooted-tool",
+    version: "4.5.6",
+    bin: { "rooted-tool": "bin/tool.js" },
+  }));
+  await writeFile(executable, "#!/usr/bin/env node\nconsole.log('rooted')\n");
+  await chmod(executable, 0o755);
+  await writeFile(join(overrideRoot, "README.md"), "Override docs\n");
+
+  const result = await run([
+    "--agent",
+    "none",
+    "--ecosystem",
+    "npm",
+    "--no-exec",
+    "--refresh",
+    "--executable",
+    executable,
+    "--package-root",
+    overrideRoot,
+    "rooted-tool",
+    "What docs are available?",
+  ]);
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, new RegExp(`Package root: ${escapeRegExp(await realpath(overrideRoot))}`));
+  assert.match(result.stdout, /Confidence: medium/);
+  assert.match(result.stdout, /Package root override differs from resolver package root/);
+  assert.match(result.stdout, /package\/README\.md/);
+});
+
+test("JSON output exposes uncertainty for low-confidence fallback context", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-cli-uncertainty-"));
+  const executable = join(temp, "loose-tool");
+  await writeFile(executable, "#!/bin/sh\necho loose\n");
+  await chmod(executable, 0o755);
+
+  const result = await run([
+    "--agent",
+    "none",
+    "--ecosystem",
+    "fallback",
+    "--json",
+    "--refresh",
+    "--executable",
+    executable,
+    "loose-tool",
+    "How do I use it?",
+  ]);
+
+  assert.equal(result.exitCode, 0);
+  const payload = JSON.parse(result.stdout);
+  assert.ok(payload.uncertainty.some((item) => item.code === "low_confidence"));
+  assert.ok(payload.uncertainty.some((item) => item.code === "fallback_resolution"));
+  assert.ok(payload.uncertainty.some((item) => item.code === "fallback_help_exec"));
+});
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}

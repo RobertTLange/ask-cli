@@ -22,6 +22,37 @@ test("cache key includes entry source hash", async () => {
   assert.notEqual(first, second);
 });
 
+test("cache key includes collection options", async () => {
+  const base = resolution();
+
+  const noExec = await cacheKeyForResolution(base, collectionOptions({ noExec: true }));
+  const execAllowed = await cacheKeyForResolution(base, collectionOptions({ noExec: false }));
+  const smallerFiles = await cacheKeyForResolution(base, collectionOptions({ maxFiles: 1 }));
+  const smallerBytes = await cacheKeyForResolution(base, collectionOptions({ maxBytes: 128 }));
+
+  assert.notEqual(noExec, execAllowed);
+  assert.notEqual(noExec, smallerFiles);
+  assert.notEqual(noExec, smallerBytes);
+});
+
+test("cache key includes metadata file content", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-cache-metadata-"));
+  const metadata = join(temp, "package.json");
+  await writeFile(metadata, "{\"version\":\"one\"}\n");
+
+  const first = await cacheKeyForResolution(
+    resolution({ metadataFiles: [metadata] }),
+    collectionOptions(),
+  );
+  await writeFile(metadata, "{\"version\":\"two\"}\n");
+  const second = await cacheKeyForResolution(
+    resolution({ metadataFiles: [metadata] }),
+    collectionOptions(),
+  );
+
+  assert.notEqual(first, second);
+});
+
 test("cache stores and restores context bundles with bigint fields", async () => {
   const temp = await mkdtemp(join(tmpdir(), "ask-cache-"));
   const store = new CacheStore(temp);
@@ -73,6 +104,18 @@ function resolution(overrides = {}) {
     confidence: "low",
     warnings: [],
     shim: null,
+    ...overrides,
+  };
+}
+
+function collectionOptions(overrides = {}) {
+  return {
+    maxFiles: 200,
+    maxBytes: 8_388_608,
+    noExec: false,
+    allowHelpExec: true,
+    packageRootOverride: undefined,
+    executableOverride: undefined,
     ...overrides,
   };
 }

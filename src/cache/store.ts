@@ -4,7 +4,16 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ContextBundle, Resolution } from "../types.js";
 
-const collectionCacheVersion = "context-v3";
+const collectionCacheVersion = "context-v4";
+
+export interface CollectionCacheOptions {
+  readonly maxFiles: number;
+  readonly maxBytes: number;
+  readonly noExec: boolean;
+  readonly allowHelpExec: boolean;
+  readonly packageRootOverride?: string;
+  readonly executableOverride?: string;
+}
 
 export class CacheStore {
   readonly root: string;
@@ -42,6 +51,7 @@ export class CacheStore {
     await rm(destination, { recursive: true, force: true });
     await mkdir(dirname(destination), { recursive: true });
     await cp(workspacePath, destination, { recursive: true, dereference: true });
+    await chmodWritable(destination).catch(() => undefined);
   }
 
   async evict(maxSizeMb: number): Promise<void> {
@@ -61,17 +71,36 @@ export class CacheStore {
   }
 }
 
-export async function cacheKeyForResolution(resolution: Resolution): Promise<string> {
+export async function cacheKeyForResolution(
+  resolution: Resolution,
+  options: CollectionCacheOptions = {
+    maxFiles: 200,
+    maxBytes: 8_388_608,
+    noExec: false,
+    allowHelpExec: true,
+  },
+): Promise<string> {
   const entryHash = resolution.entryFile ? await firstChunkHash(resolution.entryFile) : "";
+  const metadataFingerprints = await Promise.all(
+    resolution.metadataFiles.map((file) => fileFingerprint(file)),
+  );
   return createHash("sha256")
     .update([
       collectionCacheVersion,
       resolution.command,
       resolution.packageName ?? "",
       resolution.version ?? "",
+      resolution.packageRoot ?? "",
       resolution.executableRealPath,
       resolution.executableMtimeNs.toString(),
+      options.maxFiles.toString(),
+      options.maxBytes.toString(),
+      options.noExec ? "no-exec" : "exec",
+      options.allowHelpExec ? "help-exec" : "no-help-exec",
+      options.packageRootOverride ?? "",
+      options.executableOverride ?? "",
       entryHash,
+      ...metadataFingerprints,
     ].join("|"))
     .digest("hex");
 }
@@ -87,6 +116,20 @@ async function firstChunkHash(path: string): Promise<string> {
     return createHash("sha256").update(content.subarray(0, 4096)).digest("hex");
   } catch {
     return "";
+  }
+}
+
+async function fileFingerprint(path: string): Promise<string> {
+  try {
+    const fileStat = await stat(path, { bigint: true });
+    return [
+      path,
+      fileStat.size.toString(),
+      fileStat.mtimeNs.toString(),
+      await firstChunkHash(path),
+    ].join(":");
+  } catch {
+    return `${path}:missing`;
   }
 }
 

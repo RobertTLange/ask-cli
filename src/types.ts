@@ -71,6 +71,11 @@ export interface ContextBundle {
   readonly warnings: readonly string[];
 }
 
+export interface Uncertainty {
+  readonly code: string;
+  readonly message: string;
+}
+
 export interface AgentRequest {
   readonly workspacePath: string;
   readonly question: string;

@@ -10,6 +10,7 @@ import type { LocatedExecutable, ShimInfo } from "../types.js";
 export interface LocateOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly shell?: string;
+  readonly executable?: string;
 }
 
 export async function locateExecutable(
@@ -17,15 +18,18 @@ export async function locateExecutable(
   options: LocateOptions = {},
 ): Promise<LocatedExecutable> {
   const env = options.env ?? process.env;
-  const candidatePath = await findOnPath(command, env.PATH);
-  const developmentFixturePath = candidatePath === null ? await findDevelopmentFixture(command) : null;
+  const explicitPath = options.executable ? resolve(options.executable) : null;
+  const candidatePath = explicitPath
+    ? (await isFile(explicitPath) ? explicitPath : null)
+    : await findOnPath(command, env.PATH);
+  const developmentFixturePath = candidatePath === null && explicitPath === null ? await findDevelopmentFixture(command) : null;
 
   if (candidatePath === null && developmentFixturePath === null) {
     throw new AskError(
-      "command was not found on PATH",
+      explicitPath ? "explicit executable was not found" : "command was not found on PATH",
       exitCodes.resolution,
-      `locate executable for ${command}`,
-      "check the command name, install it, or pass --executable <path>",
+      explicitPath ? `locate executable at ${explicitPath}` : `locate executable for ${command}`,
+      explicitPath ? "check --executable points to a real file" : "check the command name, install it, or pass --executable <path>",
     );
   }
 
@@ -34,7 +38,9 @@ export async function locateExecutable(
     throw new Error("unreachable locate state");
   }
 
-  await rejectShellOnlyCommand(command, options.shell ?? env.SHELL);
+  if (explicitPath === null) {
+    await rejectShellOnlyCommand(command, options.shell ?? env.SHELL);
+  }
   await assertUserExecutable(locatedPath, command);
 
   const shim = await detectShim(command, locatedPath);
