@@ -269,27 +269,80 @@ async function removeWorkspace(path: string): Promise<void> {
 async function acquireWorkspaceLock(lockPath: string): Promise<() => Promise<void>> {
   const startedAt = Date.now();
   const staleLockMs = 60_000;
+  const legacyLockMs = 2_000;
+  const ownerPath = join(lockPath, "owner.json");
   await mkdir(dirname(lockPath), { recursive: true });
 
   while (true) {
     try {
       await mkdir(lockPath, { recursive: false });
+      await writeFile(ownerPath, `${JSON.stringify({ pid: process.pid, startedAt })}\n`).catch(() => undefined);
       return async () => {
         await rm(lockPath, { recursive: true, force: true });
       };
     } catch (error) {
+      if (!isErrnoException(error) || error.code !== "EEXIST") {
+        throw error;
+      }
+
       const lockStat = await stat(lockPath).catch(() => null);
-      if (lockStat && Date.now() - lockStat.mtimeMs > staleLockMs) {
+      if (lockStat && await shouldRemoveWorkspaceLock(lockPath, Date.now() - lockStat.mtimeMs, staleLockMs, legacyLockMs)) {
         await rm(lockPath, { recursive: true, force: true }).catch(() => undefined);
         continue;
       }
 
       if (Date.now() - startedAt > 20_000) {
-        throw error;
+        throw new Error(`timed out waiting for workspace lock: ${lockPath}`);
       }
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
   }
+}
+
+async function shouldRemoveWorkspaceLock(
+  lockPath: string,
+  ageMs: number,
+  staleLockMs: number,
+  legacyLockMs: number,
+): Promise<boolean> {
+  const owner = await readWorkspaceLockOwner(join(lockPath, "owner.json"));
+  if (!owner) {
+    return ageMs > legacyLockMs;
+  }
+
+  return !isProcessAlive(owner.pid) || ageMs > staleLockMs;
+}
+
+async function readWorkspaceLockOwner(path: string): Promise<{ readonly pid: number } | null> {
+  const raw = await readFile(path, "utf8").catch(() => "");
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+
+    const pid = (parsed as { readonly pid?: unknown }).pid;
+    return typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0 ? { pid } : null;
+  } catch {
+    return null;
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
 }
 
 async function chmodWritable(path: string): Promise<void> {
