@@ -2,6 +2,7 @@ import { open, readdir, readFile, stat } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative } from "node:path";
 import { runSandbox } from "../sandbox.js";
 import type { ContextBundle, FileKind, FileRef, HelpOutput, Limits, Resolution } from "../types.js";
+import { collectManOutput, fallbackFileCandidates } from "./fallback.js";
 import { defaultLimits } from "./limits.js";
 
 export interface CollectionOptions {
@@ -69,6 +70,12 @@ export async function collectContext(
     await addFileRef(discoveryState, metadataFile, "config", metadataRelPath(discoveryState, metadataFile));
   }
 
+  if (resolution.ecosystem === "fallback" && !resolution.packageRoot) {
+    for (const file of await fallbackFileCandidates(resolution)) {
+      await addFileRef(discoveryState, file.path, file.kind, file.relPath);
+    }
+  }
+
   if (resolution.packageRoot) {
     await discoverPackageFiles(discoveryState, resolution.packageRoot, 0);
   }
@@ -104,6 +111,13 @@ async function collectHelpOutputs(
 
   for (const subcommand of parseSubcommands(help.stdout).slice(0, limits.subcommandHelpLimit)) {
     outputs.push(await runAllowedCommand(resolution, [subcommand, "--help"], limits));
+  }
+
+  if (resolution.ecosystem === "fallback") {
+    const man = await collectManOutput(resolution, limits);
+    if (man) {
+      outputs.push(man);
+    }
   }
 
   return outputs;

@@ -39,6 +39,34 @@ test("collector honors --no-exec", async () => {
   assert.ok(bundle.files.length > 0);
 });
 
+test("collector only gathers man output for fallback resolutions", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-npm-no-man-"));
+  const fakeBinDir = join(temp, "fake-bin");
+  await mkdir(fakeBinDir);
+  const man = join(fakeBinDir, "man");
+  await writeFile(man, "#!/bin/sh\necho 'npm fixture manual should not be collected'\n");
+  await chmod(man, 0o755);
+
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${fakeBinDir}:${originalPath ?? ""}`;
+
+  try {
+    const bundle = await collectContext(await npmFixtureResolution(), {
+      ...defaultLimits,
+      helpTimeoutMs: 1_000,
+      helpStdoutBytes: 4_096,
+    });
+
+    assert.ok(!bundle.helpOutputs.some((output) => output.command[0] === "man"));
+  } finally {
+    if (originalPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = originalPath;
+    }
+  }
+});
+
 test("collector includes dist entrypoint and local imports", async () => {
   const temp = await mkdtemp(join(tmpdir(), "ask-collector-dist-"));
   const dist = join(temp, "dist");
@@ -143,6 +171,61 @@ test("collector enforces file count and byte truncation limits", async () => {
   assert.equal(bundle.files.length, 2);
   assert.ok(bundle.files.some((file) => file.truncated));
   assert.match(bundle.warnings[0], /limits/);
+});
+
+test("fallback collector stages script body, adjacent docs, and man output", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-fallback-context-"));
+  const binDir = join(temp, "bin");
+  const fakeBinDir = join(temp, "fake-bin");
+  const manDir = join(temp, "man", "man1");
+  await mkdir(binDir, { recursive: true });
+  await mkdir(fakeBinDir);
+  await mkdir(manDir, { recursive: true });
+  const executable = join(binDir, "loose-tool");
+  const man = join(fakeBinDir, "man");
+  await writeFile(executable, "#!/bin/sh\ncase \"$1\" in --help) echo usage loose;; esac\n");
+  await chmod(executable, 0o755);
+  await writeFile(man, "#!/bin/sh\necho 'LOOSE-TOOL(1) fake manual'\n");
+  await chmod(man, 0o755);
+  await writeFile(join(binDir, "README.md"), "Loose tool docs\n");
+  await writeFile(join(binDir, "loose-tool.conf"), "setting = true\n");
+  await writeFile(join(manDir, "loose-tool.1"), ".TH loose-tool 1\n.SH NAME\nloose-tool\n");
+
+  const resolution = {
+    command: "loose-tool",
+    executablePath: executable,
+    executableRealPath: executable,
+    executableMtimeNs: 1n,
+    ecosystem: "fallback",
+    packageName: null,
+    version: null,
+    packageRoot: null,
+    entryFile: null,
+    metadataFiles: [],
+    confidence: "low",
+    warnings: [],
+    shim: null,
+  };
+
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${fakeBinDir}:${originalPath ?? ""}`;
+
+  const bundle = await collectContext(resolution, {
+    ...defaultLimits,
+    helpTimeoutMs: 1_000,
+    helpStdoutBytes: 4_096,
+  });
+
+  if (originalPath === undefined) {
+    delete process.env.PATH;
+  } else {
+    process.env.PATH = originalPath;
+  }
+
+  assertCollectedRelPath(bundle, "bin/loose-tool");
+  assertCollectedRelPath(bundle, "bin/README.md");
+  assertCollectedRelPath(bundle, "bin/loose-tool.conf");
+  assert.ok(bundle.helpOutputs.some((output) => output.command[0] === "man"));
 });
 
 async function npmFixtureResolution() {

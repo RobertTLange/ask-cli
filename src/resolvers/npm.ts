@@ -1,6 +1,7 @@
 import { readFile, realpath, stat } from "node:fs/promises";
 import { dirname, join, parse } from "node:path";
 import type { LocatedExecutable, Resolution } from "../types.js";
+import { resolveLocalWrapperTarget } from "./wrappers.js";
 
 interface PackageJson {
   readonly name?: unknown;
@@ -9,6 +10,11 @@ interface PackageJson {
 }
 
 export async function resolveNpmPackage(located: LocatedExecutable): Promise<Resolution> {
+  const wrapper = await resolveThroughWrapper(located);
+  if (wrapper) {
+    return wrapper;
+  }
+
   const exact = await resolveByPackageJsonBin(located);
   if (exact) {
     return exact;
@@ -20,6 +26,24 @@ export async function resolveNpmPackage(located: LocatedExecutable): Promise<Res
   }
 
   return unresolvedNpmResolution(located, ["npm package metadata was not found"]);
+}
+
+async function resolveThroughWrapper(located: LocatedExecutable): Promise<Resolution | null> {
+  const target = await resolveLocalWrapperTarget(located.realPath);
+  if (!target) {
+    return null;
+  }
+
+  const targetLocated = { ...located, realPath: target };
+  const exact = await resolveByPackageJsonBin(targetLocated);
+  if (!exact) {
+    return null;
+  }
+
+  return {
+    ...exact,
+    warnings: [...exact.warnings, "Resolved package metadata through local wrapper script"],
+  };
 }
 
 async function resolveByPackageJsonBin(located: LocatedExecutable): Promise<Resolution | null> {

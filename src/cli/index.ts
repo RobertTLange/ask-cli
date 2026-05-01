@@ -5,9 +5,12 @@ import { join } from "node:path";
 import { helpText, packageVersion, exitCodes } from "./constants.js";
 import { ConfigError, loadConfig } from "./config.js";
 import { parseInvocation, UsageError, type ParsedInvocation } from "./args.js";
+import { cacheOptionsForInvocation } from "./cache-options.js";
 import { collectContext } from "../collectors/context.js";
 import { defaultLimits } from "../collectors/limits.js";
 import { ProgressFormatter } from "./progress.js";
+import { applyPackageRootOverride } from "./resolution-overrides.js";
+import { buildUncertainty, formatUncertaintyBlock } from "./uncertainty.js";
 import { AgentError, HeadlessAgent, type HeadlessBackend } from "../agents/headless.js";
 import { NoneAgent } from "../agents/none.js";
 import { buildAgentPrompt } from "../agents/prompt.js";
@@ -21,7 +24,7 @@ import { locateExecutable } from "../resolvers/locate.js";
 import { resolveNpmPackage } from "../resolvers/npm.js";
 import { resolvePythonPackage } from "../resolvers/python.js";
 import { Trace } from "../trace.js";
-import type { Resolution } from "../types.js";
+import type { ContextBundle, Resolution, Uncertainty } from "../types.js";
 import { stageWorkspace } from "../workspace/stage.js";
 
 type DiagnosticWriter = (text: string) => void;
@@ -111,7 +114,9 @@ async function runQuestion(
   }
 
   const locateStartedAt = performance.now();
-  const located = await locateExecutable(invocation.command);
+  const located = await locateExecutable(invocation.command, {
+    executable: invocation.config.executable,
+  });
   trace.record({
     stage: "locate",
     decision: located.path,
@@ -135,14 +140,16 @@ async function runQuestion(
     durationMs: Math.round(performance.now() - ecosystemStartedAt),
   });
 
-  const resolution = await resolveForEcosystem(
+  let resolution = await resolveForEcosystem(
     located,
     ecosystem.ecosystem,
     invocation.config.ecosystem === "auto",
   );
+  resolution = await applyPackageRootOverride(resolution, invocation.config.packageRoot);
 
   const cache = new CacheStore();
-  const cacheKey = await cacheKeyForResolution(resolution);
+  const cacheOptions = cacheOptionsForInvocation(invocation);
+  const cacheKey = await cacheKeyForResolution(resolution, cacheOptions);
   const cachedBundle = invocation.config.refresh ? null : await cache.getBundle(cacheKey);
   trace.record({
     stage: "cache",
@@ -229,16 +236,18 @@ async function runQuestion(
       );
     }
 
+    const uncertainty = buildUncertainty(resolution, bundle);
     const stderr = invocation.config.debug ? trace.toDebugString() : undefined;
     return invocation.config.json
-      ? jsonAnswer(invocation, resolution, parsedAnswer.text, staged.path, trace, stderr, parsedAnswer.usage)
+      ? jsonAnswer(invocation, resolution, bundle, uncertainty, parsedAnswer.text, staged.path, trace, stderr, parsedAnswer.usage)
       : {
           exitCode: exitCodes.success,
           stdout: [
             resolutionSummary(resolution),
+            formatUncertaintyBlock(uncertainty),
             parsedAnswer.text,
             parsedAnswer.usage ? JSON.stringify({ usage: parsedAnswer.usage }) : "",
-          ].join("\n"),
+          ].filter((part) => part.length > 0).join("\n"),
           stderr,
         };
   } catch (error) {
@@ -346,7 +355,7 @@ function runHeadlessPrintCommand(command: string, args: readonly string[]): Prom
     const timeout = setTimeout(() => {
       child.kill("SIGTERM");
       settle("");
-    }, 2_000);
+    }, 4_000);
     timeout.unref();
 
     child.stdout?.on("data", (chunk) => {
@@ -559,6 +568,8 @@ function resolutionSummary(resolution: Resolution): string {
 function jsonAnswer(
   invocation: ParsedInvocation,
   resolution: Resolution,
+  bundle: ContextBundle,
+  uncertainty: readonly Uncertainty[],
   answer: string,
   workspacePath: string,
   trace: Trace,
@@ -577,8 +588,8 @@ function jsonAnswer(
       },
       answer,
       citations: [{ path: "ASK_CONTEXT.md", start: 1, end: 1, kind: "context" }],
-      uncertainty: [],
-      warnings: resolution.warnings,
+      uncertainty,
+      warnings: [...resolution.warnings, ...bundle.warnings],
       usage,
       debug: invocation.config.debug ? { trace: trace.events(), workspacePath } : undefined,
     }, null, 2)}\n`,

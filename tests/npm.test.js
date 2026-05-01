@@ -55,6 +55,60 @@ test("npm resolver falls back to package root inside node_modules", async () => 
   assert.match(resolution.warnings[0], /No exact package\.json bin match/);
 });
 
+test("npm resolver follows local shell wrapper shims to package metadata", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-npm-wrapper-"));
+  const binDir = join(temp, "node_modules", ".bin");
+  const packageRoot = join(temp, "node_modules", "wrapped-tool");
+  const packageBin = join(packageRoot, "bin");
+  await mkdir(binDir, { recursive: true });
+  await mkdir(packageBin, { recursive: true });
+  const wrapper = join(binDir, "wrapped-tool");
+  const target = join(packageBin, "cli.js");
+  await writeFile(join(packageRoot, "package.json"), JSON.stringify({
+    name: "wrapped-tool",
+    version: "9.8.7",
+    bin: { "wrapped-tool": "bin/cli.js" },
+  }));
+  await writeFile(wrapper, "#!/bin/sh\nbasedir=$(dirname \"$0\")\nexec node \"$basedir/../wrapped-tool/bin/cli.js\" \"$@\"\n");
+  await chmod(wrapper, 0o755);
+  await writeFile(target, "#!/usr/bin/env node\nconsole.log('wrapped')\n");
+  await chmod(target, 0o755);
+
+  const located = await locateExecutable(wrapper, { env: { PATH: "", SHELL: "/missing-shell" } });
+  const resolution = await resolveNpmPackage({ ...located, command: "wrapped-tool" });
+
+  assert.equal(resolution.packageName, "wrapped-tool");
+  assert.equal(resolution.version, "9.8.7");
+  assert.equal(resolution.entryFile, await realpath(target));
+  assert.match(resolution.warnings.join("; "), /wrapper script/);
+});
+
+test("npm resolver follows local node wrapper shims to package metadata", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-npm-node-wrapper-"));
+  const binDir = join(temp, "node_modules", ".bin");
+  const packageRoot = join(temp, "node_modules", "node-wrapped-tool");
+  const packageBin = join(packageRoot, "bin");
+  await mkdir(binDir, { recursive: true });
+  await mkdir(packageBin, { recursive: true });
+  const wrapper = join(binDir, "node-wrapped-tool");
+  const target = join(packageBin, "cli.js");
+  await writeFile(join(packageRoot, "package.json"), JSON.stringify({
+    name: "node-wrapped-tool",
+    version: "1.0.1",
+    bin: { "node-wrapped-tool": "bin/cli.js" },
+  }));
+  await writeFile(wrapper, "#!/usr/bin/env node\nrequire('../node-wrapped-tool/bin/cli.js');\n");
+  await chmod(wrapper, 0o755);
+  await writeFile(target, "#!/usr/bin/env node\nconsole.log('node wrapped')\n");
+  await chmod(target, 0o755);
+
+  const located = await locateExecutable(wrapper, { env: { PATH: "", SHELL: "/missing-shell" } });
+  const resolution = await resolveNpmPackage({ ...located, command: "node-wrapped-tool" });
+
+  assert.equal(resolution.packageName, "node-wrapped-tool");
+  assert.equal(resolution.entryFile, await realpath(target));
+});
+
 test("CLI --agent none reports npm fixture resolution", async () => {
   const result = await run([
     "--agent",

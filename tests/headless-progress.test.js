@@ -122,6 +122,26 @@ test("Headless progress label resolves auto agent through print command", async 
   assert.doesNotMatch(diagnostics.join(""), /ask\[auto-default-high\]/);
 });
 
+test("Headless progress label tolerates slower npx print-command startup", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-slow-print-command-"));
+  const diagnostics = [];
+  await withFakeNpx(async () => {
+    const result = await withEnv({ HOME: temp }, () => run([
+      "fixture-cli-npm",
+      "How do I enable json output?",
+    ], (text) => diagnostics.push(text)));
+
+    assert.equal(result.exitCode, 0);
+  }, {
+    printCommand: "printf %s prompt | codex --model gpt-5.5 --json -",
+    sleepMs: 2_500,
+    stdout: jsonl([{ type: "agent_message", text: "headless answer" }]),
+  });
+
+  assert.match(diagnostics.join(""), /ask\[codex-gpt-5.5-default\]: agent started/);
+  assert.doesNotMatch(diagnostics.join(""), /ask\[auto-default-default\]/);
+});
+
 test("Headless progress label reads Codex configured reasoning for auto agent", async () => {
   const temp = await mkdtemp(join(tmpdir(), "ask-codex-reasoning-"));
   const codexConfigDir = join(temp, ".codex");

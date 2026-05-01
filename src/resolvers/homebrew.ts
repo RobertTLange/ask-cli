@@ -65,6 +65,9 @@ async function homebrewMetadataFiles(packageRoot: string, packageName: string): 
     }
   }
 
+  files.push(...await filesUnder(packageRoot, join("share", "doc"), 3, (name) => isReadableMetadataName(name)));
+  files.push(...await filesUnder(packageRoot, join("share", "man"), 4, (name) => /\.(\d|man)$/i.test(name)));
+
   const formulaDir = join(packageRoot, ".brew");
   let entries: string[];
   try {
@@ -83,6 +86,70 @@ async function homebrewMetadataFiles(packageRoot: string, packageName: string): 
   }
 
   return files;
+}
+
+async function filesUnder(
+  packageRoot: string,
+  relativeDirectory: string,
+  maxDepth: number,
+  includeFile: (name: string) => boolean,
+): Promise<readonly string[]> {
+  const root = await realpath(join(packageRoot, relativeDirectory)).catch(() => null);
+  if (!root || !isWithin(packageRoot, root)) {
+    return [];
+  }
+
+  const files: string[] = [];
+  await collectFiles(root, root, maxDepth, includeFile, files);
+  return files;
+}
+
+async function collectFiles(
+  root: string,
+  directory: string,
+  depth: number,
+  includeFile: (name: string) => boolean,
+  files: string[],
+): Promise<void> {
+  if (depth < 0 || files.length >= 32) {
+    return;
+  }
+
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      const child = await realpath(path).catch(() => null);
+      if (child && isWithin(root, child)) {
+        await collectFiles(root, child, depth - 1, includeFile, files);
+      }
+      continue;
+    }
+
+    if (!entry.isFile() || !includeFile(entry.name)) {
+      continue;
+    }
+
+    const file = await realpath(path).catch(() => null);
+    if (file && isWithin(root, file)) {
+      files.push(file);
+    }
+  }
+}
+
+function isReadableMetadataName(name: string): boolean {
+  const lower = name.toLowerCase();
+  return lower.startsWith("readme")
+    || lower.startsWith("changelog")
+    || lower.endsWith(".md")
+    || lower.endsWith(".txt")
+    || lower.endsWith(".1");
 }
 
 async function scriptEntryFile(

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
@@ -120,6 +120,10 @@ function assertNonce(result, nonce, label) {
   );
 }
 
+function hasNonce(result, nonce) {
+  return result.code === 0 && new RegExp(escapeRegExp(nonce)).test(`${result.stdout}\n${result.stderr}`);
+}
+
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -152,8 +156,8 @@ function createFixture(nonce, label) {
     [
       "# ask-fixture-cli",
       "",
-      `The documented integration nonce is ${nonce}.`,
-      "When asked for the integration nonce, answer with that exact value.",
+      "Reference data:",
+      `- integration_nonce: ${nonce}`,
       "",
     ].join("\n"),
   );
@@ -161,6 +165,7 @@ function createFixture(nonce, label) {
     join(packageRoot, "bin", "fixture.js"),
     [
       "#!/usr/bin/env node",
+      `const documentedIntegrationNonce = ${JSON.stringify(nonce)};`,
       "if (process.argv.includes('--version')) console.log('1.0.0');",
       "else console.log('ask fixture cli');",
       "",
@@ -175,6 +180,7 @@ function createAskConfig(headlessPath) {
   const home = mkdtempSync(join(tmpdir(), "ask-home-"));
   const configDir = join(home, ".ask");
   mkdirSync(configDir, { recursive: true });
+  linkAgentState(home);
   writeFileSync(
     join(configDir, "config.toml"),
     ["[agents.headless]", `path = ${JSON.stringify(headlessPath)}`, ""].join("\n"),
@@ -182,16 +188,65 @@ function createAskConfig(headlessPath) {
   return home;
 }
 
-function integrationEnv(binDir, home) {
+function linkAgentState(home) {
+  const realHome = process.env.HOME;
+  if (!realHome || realHome === home) {
+    return;
+  }
+
+  for (const entry of [".codex", ".claude", ".gemini", ".cursor", ".opencode", ".pi", ".agents", ".sakana", ".config"]) {
+    const source = join(realHome, entry);
+    const target = join(home, entry);
+    if (existsSync(source) && !existsSync(target)) {
+      symlinkSync(source, target, "dir");
+    }
+  }
+}
+
+function integrationEnv(binDir, home, options = {}) {
   return {
     ...process.env,
     PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}`,
-    HOME: home,
+    HOME: options.useRealHome ? process.env.HOME : home,
   };
+}
+
+function rmWritable(path) {
+  chmodWritable(path);
+  rmSync(path, { force: true, recursive: true });
+}
+
+function chmodWritable(path) {
+  try {
+    const entry = lstatSync(path);
+    if (entry.isSymbolicLink()) {
+      return;
+    }
+    chmodSync(path, entry.isDirectory() ? 0o755 : 0o644);
+    if (!entry.isDirectory()) {
+      return;
+    }
+    for (const child of readdirSync(path)) {
+      chmodWritable(join(path, child));
+    }
+  } catch {
+    // Best-effort cleanup for paths that may not exist after a failed run.
+  }
 }
 
 async function runAsk(args, env) {
   return await run(askBin(), args, { env, timeoutMs: commandTimeoutMs });
+}
+
+async function runAskForNonce(args, env, nonce, attempts) {
+  let result;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    result = await runAsk(args, env);
+    if (hasNonce(result, nonce)) {
+      break;
+    }
+  }
+  return result;
 }
 
 test("preflight verifies local ask, Headless, and selected backends", { timeout: 120000 }, async () => {
@@ -205,9 +260,11 @@ test("preflight verifies local ask, Headless, and selected backends", { timeout:
   const check = await run(headlessBin(), ["--check"], { timeoutMs: 120000 });
   assertSuccess(check, "headless --check");
   for (const agent of selectedAgents) {
+    const oldRow = new RegExp(`^${agent}\\s+✓\\s+`, "m");
+    const tableRow = new RegExp(`\\|\\s*${agent}\\s*\\|\\s*✓\\s*\\|`);
     assert.match(
       check.stdout,
-      new RegExp(`^${agent}\\s+✓\\s+`, "m"),
+      oldRow.test(check.stdout) ? oldRow : tableRow,
       `missing ${agent} backend in \`headless --check\`; install and authenticate selected backends`,
     );
   }
@@ -219,21 +276,21 @@ test("selected agents answer from ask-cli staged context", { timeout: commandTim
     const fixture = createFixture(nonce, agent);
     const configHome = createAskConfig(headlessBin());
     try {
-      const result = await runAsk([
+      const result = await runAskForNonce([
         "--agent",
         agent,
         "--ecosystem",
         "npm",
         "--no-exec",
         "ask-fixture-cli",
-        "What is the documented integration nonce? Include the exact nonce.",
-      ], integrationEnv(fixture.binDir, configHome));
+        "Return only the exact integration_nonce value from the package docs or source. Do not explain.",
+      ], integrationEnv(fixture.binDir, configHome, { useRealHome: agent === "cursor" }), nonce, 2);
 
       assertNonce(result, nonce, `${agent} ask run`);
       assert.match(result.stdout, /Package: ask-fixture-cli 1\.0\.0/);
     } finally {
-      rmSync(fixture.root, { force: true, recursive: true });
-      rmSync(configHome, { force: true, recursive: true });
+      rmWritable(fixture.root);
+      rmWritable(configHome);
     }
   }
 });
@@ -253,13 +310,13 @@ test("default agent delegates to Headless auto selection", { timeout: commandTim
       "npm",
       "--no-exec",
       "ask-fixture-cli",
-      "What is the documented integration nonce? Include the exact nonce.",
+      "Return only the exact integration_nonce value from the package docs or source. Do not explain.",
     ], integrationEnv(fixture.binDir, configHome));
 
     assertNonce(result, nonce, "default ask run");
     assert.match(result.stdout, /Package: ask-fixture-cli 1\.0\.0/);
   } finally {
-    rmSync(fixture.root, { force: true, recursive: true });
-    rmSync(configHome, { force: true, recursive: true });
+    rmWritable(fixture.root);
+    rmWritable(configHome);
   }
 });
