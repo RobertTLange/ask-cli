@@ -1,12 +1,13 @@
-import { readFile, realpath, stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { readUtf8FileWithinLimit } from "../fs/read-prefix.js";
 
 const maxWrapperBytes = 16_384;
 
 export async function resolveLocalWrapperTarget(wrapperPath: string): Promise<string | null> {
   const wrapperRealPath = await realpath(wrapperPath).catch(() => wrapperPath);
-  const content = await readFile(wrapperRealPath, "utf8").catch(() => null);
-  if (!content || content.includes("\u0000") || content.length > maxWrapperBytes) {
+  const content = await readUtf8FileWithinLimit(wrapperRealPath, maxWrapperBytes);
+  if (!content || content.includes("\u0000")) {
     return null;
   }
 

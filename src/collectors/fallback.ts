@@ -1,5 +1,6 @@
-import { readdir, readFile, realpath } from "node:fs/promises";
+import { readdir, realpath } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, sep } from "node:path";
+import { readUtf8Prefix } from "../fs/read-prefix.js";
 import { runSandbox } from "../sandbox.js";
 import type { FileKind, HelpOutput, Limits, Resolution } from "../types.js";
 
@@ -125,8 +126,8 @@ async function isTextLikeExecutable(realPath: string, displayPath: string): Prom
     return true;
   }
 
-  const prefix = await readFile(realPath, "utf8").catch(() => "");
-  const sample = prefix.slice(0, 512);
+  const prefix = await readUtf8Prefix(realPath, 512);
+  const sample = prefix?.text ?? "";
   if (sample.startsWith("#!")) {
     return true;
   }
