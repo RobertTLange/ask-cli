@@ -113,9 +113,11 @@ async function collectHelpOutputs(
     outputs.push(await runAllowedCommand(resolution, [subcommand, "--help"], limits));
   }
 
-  const man = await collectManOutput(resolution, limits);
-  if (man) {
-    outputs.push(man);
+  if (resolution.ecosystem === "fallback") {
+    const man = await collectManOutput(resolution, limits);
+    if (man) {
+      outputs.push(man);
+    }
   }
 
   return outputs;

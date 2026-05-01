@@ -39,6 +39,34 @@ test("collector honors --no-exec", async () => {
   assert.ok(bundle.files.length > 0);
 });
 
+test("collector only gathers man output for fallback resolutions", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-npm-no-man-"));
+  const fakeBinDir = join(temp, "fake-bin");
+  await mkdir(fakeBinDir);
+  const man = join(fakeBinDir, "man");
+  await writeFile(man, "#!/bin/sh\necho 'npm fixture manual should not be collected'\n");
+  await chmod(man, 0o755);
+
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${fakeBinDir}:${originalPath ?? ""}`;
+
+  try {
+    const bundle = await collectContext(await npmFixtureResolution(), {
+      ...defaultLimits,
+      helpTimeoutMs: 1_000,
+      helpStdoutBytes: 4_096,
+    });
+
+    assert.ok(!bundle.helpOutputs.some((output) => output.command[0] === "man"));
+  } finally {
+    if (originalPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = originalPath;
+    }
+  }
+});
+
 test("collector includes dist entrypoint and local imports", async () => {
   const temp = await mkdtemp(join(tmpdir(), "ask-collector-dist-"));
   const dist = join(temp, "dist");
