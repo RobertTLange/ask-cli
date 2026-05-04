@@ -2,6 +2,7 @@
   "name": "@roberttlange/ask-cli",
   "version": "0.1.0",
   "description": "Ask usage questions about installed command-line tools.",
+  "license": "Apache-2.0",
   "type": "module",
   "bin": {
     "ask": "./bin/ask.js"
