@@ -6,7 +6,7 @@ export function buildAgentPrompt(input: {
   readonly resolution: Resolution;
   readonly workspacePath: string;
 }): string {
-  const { command, question, resolution, workspacePath } = input;
+  const { command, question, resolution } = input;
 
   return `You are answering a usage question about an installed command-line tool.
 
@@ -16,7 +16,7 @@ Package:      ${resolution.packageName ?? "not available"} ${resolution.version 
 Ecosystem:    ${resolution.ecosystem}
 Executable:   ${resolution.executablePath}
 Package root: ${resolution.packageRoot ? "package/" : "none"}
-Workspace:    ${workspacePath}
+Workspace:    .
 
 The workspace contains help output, package source, docs, and an
 index file \`ASK_CONTEXT.md\`. Read it first.
@@ -27,6 +27,8 @@ Rules:
 - You may run read-only inspection commands inside the workspace to read files.
 - Do not modify files, execute package code, install dependencies, or access the network.
 - Do not read files outside the workspace.
+- Use relative paths for inspection commands and tool calls, for example
+  \`ASK_CONTEXT.md\`; do not use absolute paths.
 - Prefer primary sources: help output, parser source, tests, README.
 - If confidence is low, context is truncated, or warnings are present, lead with
   those limitations before giving the answer.
