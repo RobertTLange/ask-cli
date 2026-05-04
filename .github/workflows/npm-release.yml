@@ -80,6 +80,12 @@ jobs:
         run: npm pack --dry-run
 
       - name: Publish
-        run: npm publish --access public --provenance
+        shell: bash
+        run: |
+          if [[ "${{ github.event.repository.private }}" == "true" ]]; then
+            npm publish --access public
+          else
+            npm publish --access public --provenance
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
