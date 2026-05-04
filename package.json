@@ -3,6 +3,23 @@
   "version": "0.1.0",
   "description": "Ask usage questions about installed command-line tools.",
   "license": "Apache-2.0",
+  "author": "Robert Lange <robertlange0@gmail.com>",
+  "homepage": "https://github.com/RobertTLange/ask-cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RobertTLange/ask-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/RobertTLange/ask-cli/issues"
+  },
+  "keywords": [
+    "cli",
+    "developer-tools",
+    "headless",
+    "llm",
+    "documentation",
+    "package-inspection"
+  ],
   "type": "module",
   "bin": {
     "ask": "./bin/ask.js"
@@ -13,6 +30,7 @@
   },
   "files": [
     "bin",
+    "CHANGELOG.md",
     "config.toml.example",
     "dist",
     "docs"
