@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/logo.png" alt="ask-cli command context resolver" width="200" style="border-radius: 24px;" />
+  <img src="docs/logo.png" alt="ask command context resolver" width="200" style="border-radius: 24px;" />
 </p>
 
-<h1 align="center">ask-cli</h1>
+<h1 align="center">ask</h1>
 
 <p align="center">
   Ask usage questions about installed command-line tools from their local package context.
@@ -11,7 +11,7 @@
 <p align="center">
   <img alt="Node.js 20.11+" src="https://img.shields.io/badge/Node.js-20.11%2B-339933?logo=node.js&logoColor=white" />
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-ESM-3178C6?logo=typescript&logoColor=white" />
-  <img alt="npm package" src="https://img.shields.io/badge/npm-%40roberttlange%2Fask--cli-CB3837?logo=npm&logoColor=white" />
+  <img alt="npm package" src="https://img.shields.io/badge/npm-%40roberttlange%2Fask-CB3837?logo=npm&logoColor=white" />
 </p>
 
 `ask` resolves a CLI command to the package that installed it, stages a small read-only context bundle, and asks a coding agent to answer from that bundle. It is built for the moments where `tool --help` is not enough and generic web answers are too far away from the version installed on your machine. By default, `ask` runs Headless with the first available supported agent. Pass `--agent none` to inspect the resolved context without calling an agent.
@@ -21,13 +21,13 @@
 ### With npx
 
 ```bash
-npx -y @roberttlange/ask-cli prettier "How do I ignore generated files?"
+npx -y @roberttlange/ask prettier "How do I ignore generated files?"
 ```
 
 ### Global install
 
 ```bash
-npm install -g @roberttlange/ask-cli
+npm install -g @roberttlange/ask
 ask prettier "How do I ignore generated files?"
 ```
 

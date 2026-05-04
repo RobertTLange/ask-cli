@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1 - 2026-05-04
+
+### Changed
+
+- Renamed the npm package from `@roberttlange/ask-cli` to `@roberttlange/ask`; the installed binary remains `ask`.
+- Updated README installation examples and npm badge for the new package name.
+
 ## 0.1.0 - 2026-05-04
 
 ### Added

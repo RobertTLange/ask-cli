@@ -1,5 +1,5 @@
-export const packageName = "@roberttlange/ask-cli";
-export const packageVersion = "0.1.0";
+export const packageName = "@roberttlange/ask";
+export const packageVersion = "0.1.1";
 
 export const exitCodes = {
   success: 0,
