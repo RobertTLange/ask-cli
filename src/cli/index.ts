@@ -291,20 +291,6 @@ async function runRepositoryQuestion(
     emitProgress(`resolving repository ${invocation.repo}`);
   }
 
-  const resolveStartedAt = performance.now();
-  const repository = normalizeGitHubRepository(invocation.repo);
-  trace.record({
-    stage: "repository",
-    decision: repository.slug,
-    ruleMatched: "github",
-    durationMs: Math.round(performance.now() - resolveStartedAt),
-    details: { remoteUrl: repository.remoteUrl, ref: invocation.repoRef ?? null },
-  });
-
-  if (headlessProgressEnabled) {
-    emitProgress("cloning repository context");
-  }
-
   let checkout: Awaited<ReturnType<typeof checkoutGitRepository>> | null = null;
   let checkoutReleased = false;
   const releaseCheckout = async (): Promise<void> => {
@@ -321,6 +307,20 @@ async function runRepositoryQuestion(
   };
 
   try {
+    const resolveStartedAt = performance.now();
+    const repository = normalizeGitHubRepository(invocation.repo);
+    trace.record({
+      stage: "repository",
+      decision: repository.slug,
+      ruleMatched: "github",
+      durationMs: Math.round(performance.now() - resolveStartedAt),
+      details: { remoteUrl: repository.remoteUrl, ref: invocation.repoRef ?? null },
+    });
+
+    if (headlessProgressEnabled) {
+      emitProgress("cloning repository context");
+    }
+
     const checkoutStartedAt = performance.now();
     checkout = await checkoutGitRepository({
       repository,

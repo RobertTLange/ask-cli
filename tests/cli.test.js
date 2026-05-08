@@ -124,6 +124,14 @@ test("rejects command resolver flags in repository mode", () => {
   );
 });
 
+test("maps unsupported repository input to a resolution error", async () => {
+  const result = await run(["--agent", "none", "--repo", "https://example.com/owner/repo", "question"]);
+
+  assert.equal(result.exitCode, exitCodes.resolution);
+  assert.match(result.stderr, /Resolution error: unsupported GitHub repository input/);
+  assert.match(result.stderr, /Attempted: validate repository/);
+});
+
 test("CLI flags override config defaults", () => {
   const invocation = parseInvocation(
     ["--agent", "none", "--max-files", "20", "tool", "question"],
