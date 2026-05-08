@@ -52,6 +52,9 @@ ask --agent none --keep-workspace ruff "Where are lint rules configured?"
 # Force an ecosystem resolver when auto-detection is ambiguous.
 ask --ecosystem npm prettier "How is config discovered?"
 
+# Ask about a GitHub repository by cloning it and scanning a read-only worktree.
+ask --repo RobertTLange/ask-cli --repo-ref main "How is context staged?"
+
 # Skip help/version subprocess collection.
 ask --no-exec pip "Where does it read configuration?"
 
@@ -73,6 +76,8 @@ ask --refresh cargo-nextest "How do I run one test?"
 `ask` creates a temporary workspace containing `ASK_CONTEXT.md` plus selected local package files. The staged bundle can include README files, docs, changelogs, source files, tests, examples, parser/config files, completion scripts, package metadata, and bounded help/version output.
 
 The agent sees that staged workspace as its working directory and receives a prompt that includes the resolved command, package metadata, and the user question.
+
+For repository questions, `ask --repo` clones or fetches the GitHub repository into the local ask cache, checks out the requested branch, tag, or commit into a temporary read-only full worktree, removes `.git`, and asks Headless to inspect that workspace.
 
 ## Supported Ecosystems
 
@@ -128,6 +133,7 @@ ask --agent none --keep-workspace zod "What does this package do?"
 
 ```bash
 ask <command> <question> [options]
+ask --repo <owner/name|github-url> [--repo-ref <ref>] <question> [options]
 ```
 
 Options:
@@ -135,6 +141,8 @@ Options:
 - `--ecosystem <e>`: resolver override, one of `python`, `npm`, `cargo`, `homebrew`, `fallback`, or `auto`.
 - `--package-root <path>`: use this directory as the package root.
 - `--executable <path>`: use this executable path instead of resolving `command` from `PATH`.
+- `--repo <repo>`: ask about a GitHub repository instead of an installed command. Accepts `owner/name` or `https://github.com/owner/name[.git]`.
+- `--repo-ref <ref>`: branch, tag, or commit for `--repo`. Defaults to the remote default branch.
 - `--no-exec`: skip subprocess collection.
 - `--allow-help-exec`: permit help/version subprocess collection.
 - `--agent <a>`: one of `auto`, `codex`, `claude`, `cursor`, `gemini`, `opencode`, `pi`, or `none`.

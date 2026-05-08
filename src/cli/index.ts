@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { helpText, packageVersion, exitCodes } from "./constants.js";
 import { ConfigError, loadConfig } from "./config.js";
-import { parseInvocation, UsageError, type ParsedInvocation } from "./args.js";
+import { parseInvocation, UsageError, type ParsedInvocation, type ParsedRepositoryInvocation, type RunInvocation } from "./args.js";
 import { cacheOptionsForInvocation } from "./cache-options.js";
 import { collectContext } from "../collectors/context.js";
 import { defaultLimits } from "../collectors/limits.js";
@@ -13,7 +13,7 @@ import { applyPackageRootOverride } from "./resolution-overrides.js";
 import { buildUncertainty, formatUncertaintyBlock } from "./uncertainty.js";
 import { AgentError, HeadlessAgent, type HeadlessBackend } from "../agents/headless.js";
 import { NoneAgent } from "../agents/none.js";
-import { buildAgentPrompt } from "../agents/prompt.js";
+import { buildAgentPrompt, buildRepositoryAgentPrompt } from "../agents/prompt.js";
 import { CacheStore, cacheKeyForResolution } from "../cache/store.js";
 import { AskError } from "../errors.js";
 import { detectEcosystem } from "../resolvers/ecosystem.js";
@@ -25,6 +25,7 @@ import { resolveNpmPackage } from "../resolvers/npm.js";
 import { resolvePythonPackage } from "../resolvers/python.js";
 import { Trace } from "../trace.js";
 import type { ContextBundle, Resolution, Uncertainty } from "../types.js";
+import { checkoutGitRepository, GitRepositoryError, normalizeGitHubRepository } from "../repos/github.js";
 import { stageWorkspace } from "../workspace/stage.js";
 
 type DiagnosticWriter = (text: string) => void;
@@ -100,6 +101,17 @@ export async function run(argv: string[], diagnosticWriter?: DiagnosticWriter): 
 }
 
 async function runQuestion(
+  invocation: RunInvocation,
+  emitDiagnostic: DiagnosticWriter,
+): Promise<RunResult> {
+  if (invocation.mode === "repo") {
+    return runRepositoryQuestion(invocation, emitDiagnostic);
+  }
+
+  return runCommandQuestion(invocation, emitDiagnostic);
+}
+
+async function runCommandQuestion(
   invocation: ParsedInvocation,
   emitDiagnostic: DiagnosticWriter,
 ): Promise<RunResult> {
@@ -146,6 +158,15 @@ async function runQuestion(
     invocation.config.ecosystem === "auto",
   );
   resolution = await applyPackageRootOverride(resolution, invocation.config.packageRoot);
+  const prompt = buildAgentPrompt({
+    command: invocation.command,
+    question: invocation.question,
+    resolution,
+    workspacePath: ".",
+  });
+  if (invocation.config.verbose) {
+    emitDiagnostic(formatVerbosePrompt(prompt));
+  }
 
   const cache = new CacheStore();
   const cacheOptions = cacheOptionsForInvocation(invocation);
@@ -198,16 +219,6 @@ async function runQuestion(
     }
     await cache.storeWorkspace(cacheKey, staged.path);
     await cache.evict(512);
-    const prompt = buildAgentPrompt({
-      command: invocation.command,
-      question: invocation.question,
-      resolution,
-      workspacePath: staged.path,
-    });
-    if (invocation.config.verbose) {
-      emitDiagnostic(formatVerbosePrompt(prompt));
-    }
-
     const agent = invocation.config.agent === "none"
       ? new NoneAgent()
       : new HeadlessAgent(headlessBackend(invocation.config.agent), {
@@ -266,6 +277,144 @@ async function runQuestion(
   }
 }
 
+async function runRepositoryQuestion(
+  invocation: ParsedRepositoryInvocation,
+  emitDiagnostic: DiagnosticWriter,
+): Promise<RunResult> {
+  const trace = new Trace();
+  const headlessProgressEnabled = invocation.config.agent !== "none" && !invocation.config.debug;
+  const progress = new ProgressFormatter({
+    label: headlessProgressEnabled ? await progressLabel(invocation) : progressLabelFromConfig(invocation),
+  });
+  const emitProgress = (message: string): void => emitDiagnostic(progress.format(message));
+  if (headlessProgressEnabled) {
+    emitProgress(`resolving repository ${invocation.repo}`);
+  }
+
+  const resolveStartedAt = performance.now();
+  const repository = normalizeGitHubRepository(invocation.repo);
+  trace.record({
+    stage: "repository",
+    decision: repository.slug,
+    ruleMatched: "github",
+    durationMs: Math.round(performance.now() - resolveStartedAt),
+    details: { remoteUrl: repository.remoteUrl, ref: invocation.repoRef ?? null },
+  });
+
+  if (headlessProgressEnabled) {
+    emitProgress("cloning repository context");
+  }
+
+  let checkout: Awaited<ReturnType<typeof checkoutGitRepository>> | null = null;
+  let checkoutReleased = false;
+  const releaseCheckout = async (): Promise<void> => {
+    if (!checkout || checkoutReleased) {
+      return;
+    }
+
+    checkoutReleased = true;
+    if (invocation.config.keepWorkspace) {
+      await checkout.release();
+    } else {
+      await checkout.cleanup();
+    }
+  };
+
+  try {
+    const checkoutStartedAt = performance.now();
+    checkout = await checkoutGitRepository({
+      repository,
+      question: invocation.question,
+      ref: invocation.repoRef,
+      refresh: invocation.config.refresh,
+    });
+    trace.record({
+      stage: "checkout",
+      decision: checkout.commit,
+      ruleMatched: checkout.requestedRef ?? "default",
+      durationMs: Math.round(performance.now() - checkoutStartedAt),
+      details: { cachePath: checkout.cachePath, workspacePath: checkout.workspacePath },
+    });
+    if (headlessProgressEnabled && invocation.config.keepWorkspace) {
+      emitProgress(`staged workspace ${checkout.workspacePath}`);
+    }
+
+    const prompt = buildRepositoryAgentPrompt({
+      repository: repository.slug,
+      remoteUrl: repository.remoteUrl,
+      question: invocation.question,
+      requestedRef: checkout.requestedRef,
+      resolvedRef: checkout.resolvedRef,
+      commit: checkout.commit,
+    });
+    if (invocation.config.verbose) {
+      emitDiagnostic(formatVerbosePrompt(prompt));
+    }
+
+    const agent = invocation.config.agent === "none"
+      ? new NoneAgent()
+      : new HeadlessAgent(headlessBackend(invocation.config.agent), {
+          command: invocation.config.headlessPath,
+          extraFlags: invocation.config.headlessExtraFlags,
+        });
+    const answer = await collectAgentAnswer(agent.answer({
+      workspacePath: checkout.workspacePath,
+      question: invocation.question,
+      prompt,
+      timeoutMs: invocation.config.agentTimeout * 1_000,
+      debug: invocation.config.debug,
+      usage: invocation.config.usage,
+      reasoningEffort: invocation.config.reasoningEffort,
+    }), headlessProgressEnabled || invocation.config.debug ? emitDiagnostic : undefined, progress);
+
+    await releaseCheckout();
+    const parsedAnswer = splitUsageAnswer(answer.text, invocation.config.usage);
+
+    if (answer.exitCode !== 0) {
+      throw new AgentError(
+        parsedAnswer.text || `agent exited with code ${answer.exitCode}`,
+        "run agent",
+        "run with --debug or --agent none --keep-workspace to inspect the staged repository workspace",
+      );
+    }
+
+    const stderr = invocation.config.debug ? trace.toDebugString() : undefined;
+    return invocation.config.json
+      ? jsonRepositoryAnswer(invocation, checkout, parsedAnswer.text, trace, stderr, parsedAnswer.usage)
+      : {
+          exitCode: exitCodes.success,
+          stdout: [
+            repositorySummary(checkout),
+            parsedAnswer.text,
+            parsedAnswer.usage ? JSON.stringify({ usage: parsedAnswer.usage }) : "",
+          ].filter((part) => part.length > 0).join("\n"),
+          stderr,
+        };
+  } catch (error) {
+    await releaseCheckout();
+
+    if (error instanceof AgentError) {
+      throw new AskError(
+        error.message,
+        exitCodes.agent,
+        error.attempted,
+        error.nextStep,
+      );
+    }
+
+    if (error instanceof GitRepositoryError) {
+      throw new AskError(
+        error.message,
+        exitCodes.resolution,
+        error.attempted,
+        error.nextStep,
+      );
+    }
+
+    throw error;
+  }
+}
+
 function headlessBackend(agent: ParsedInvocation["config"]["agent"]): HeadlessBackend | undefined {
   if (agent === "auto" || agent === "none") {
     return undefined;
@@ -274,7 +423,7 @@ function headlessBackend(agent: ParsedInvocation["config"]["agent"]): HeadlessBa
   return agent;
 }
 
-async function progressLabel(invocation: ParsedInvocation): Promise<string> {
+async function progressLabel(invocation: RunInvocation): Promise<string> {
   if (invocation.config.agent !== "auto") {
     return progressLabelFromConfig(invocation);
   }
@@ -287,7 +436,7 @@ async function progressLabel(invocation: ParsedInvocation): Promise<string> {
   });
 }
 
-function progressLabelFromConfig(invocation: ParsedInvocation): string {
+function progressLabelFromConfig(invocation: RunInvocation): string {
   return progressLabelFromParts({
     agent: invocation.config.agent,
     model: headlessModel(invocation.config.headlessExtraFlags),
@@ -307,7 +456,7 @@ function progressLabelFromParts(parts: {
   ].map(sanitizeProgressLabelPart).join("-")}]`;
 }
 
-async function resolveHeadlessAutoIdentity(invocation: ParsedInvocation): Promise<{
+async function resolveHeadlessAutoIdentity(invocation: RunInvocation): Promise<{
   readonly agent?: string;
   readonly model?: string;
   readonly reasoningEffort?: string;
@@ -565,6 +714,17 @@ function resolutionSummary(resolution: Resolution): string {
   ].join("\n");
 }
 
+function repositorySummary(checkout: Awaited<ReturnType<typeof checkoutGitRepository>>): string {
+  return [
+    `Repository: ${checkout.repository.slug}`,
+    `Ref: ${checkout.resolvedRef}`,
+    `Commit: ${checkout.commit}`,
+    `Workspace: ${checkout.workspacePath}`,
+    `Warnings: ${checkout.warnings.length > 0 ? checkout.warnings.join("; ") : "none"}`,
+    "",
+  ].join("\n");
+}
+
 function jsonAnswer(
   invocation: ParsedInvocation,
   resolution: Resolution,
@@ -592,6 +752,36 @@ function jsonAnswer(
       warnings: [...resolution.warnings, ...bundle.warnings],
       usage,
       debug: invocation.config.debug ? { trace: trace.events(), workspacePath } : undefined,
+    }, null, 2)}\n`,
+    stderr,
+  };
+}
+
+function jsonRepositoryAnswer(
+  invocation: ParsedRepositoryInvocation,
+  checkout: Awaited<ReturnType<typeof checkoutGitRepository>>,
+  answer: string,
+  trace: Trace,
+  stderr: string | undefined,
+  usage: unknown,
+): RunResult {
+  return {
+    exitCode: exitCodes.success,
+    stdout: `${JSON.stringify({
+      repository: {
+        input: invocation.repo,
+        slug: checkout.repository.slug,
+        remoteUrl: checkout.repository.remoteUrl,
+        requestedRef: checkout.requestedRef,
+        resolvedRef: checkout.resolvedRef,
+        commit: checkout.commit,
+      },
+      question: invocation.question,
+      answer,
+      citations: [{ path: "ASK_CONTEXT.md", start: 1, end: 1, kind: "context" }],
+      warnings: checkout.warnings,
+      usage,
+      debug: invocation.config.debug ? { trace: trace.events(), workspacePath: checkout.workspacePath } : undefined,
     }, null, 2)}\n`,
     stderr,
   };

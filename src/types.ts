@@ -79,7 +79,7 @@ export interface Uncertainty {
 export interface AgentRequest {
   readonly workspacePath: string;
   readonly question: string;
-  readonly resolution: Resolution;
+  readonly resolution?: Resolution;
   readonly prompt: string;
   readonly timeoutMs: number;
   readonly debug?: boolean;
