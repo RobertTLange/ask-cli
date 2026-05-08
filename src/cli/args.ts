@@ -4,7 +4,17 @@ import { mergeConfig } from "./config.js";
 
 export interface ParsedInvocation {
   kind: "run";
+  mode: "command";
   command: string;
+  question: string;
+  config: CliConfig;
+}
+
+export interface ParsedRepositoryInvocation {
+  kind: "run";
+  mode: "repo";
+  repo: string;
+  repoRef?: string;
   question: string;
   config: CliConfig;
 }
@@ -13,7 +23,8 @@ export interface MetaInvocation {
   kind: "help" | "version";
 }
 
-export type Invocation = ParsedInvocation | MetaInvocation;
+export type RunInvocation = ParsedInvocation | ParsedRepositoryInvocation;
+export type Invocation = RunInvocation | MetaInvocation;
 
 export class UsageError extends Error {
   constructor(message: string) {
@@ -27,6 +38,8 @@ const optionSchema = {
   version: { type: "boolean" },
   ecosystem: { type: "string" },
   "package-root": { type: "string" },
+  repo: { type: "string" },
+  "repo-ref": { type: "string" },
   executable: { type: "string" },
   "no-exec": { type: "boolean" },
   "allow-help-exec": { type: "boolean" },
@@ -66,7 +79,34 @@ export function parseInvocation(argv: string[], baseConfig: CliConfig): Invocati
     return { kind: "version" };
   }
 
+  const repo = stringValue(parsed.values.repo);
+  const repoRef = stringValue(parsed.values["repo-ref"]);
   const [command, ...questionParts] = parsed.positionals;
+  const cliConfig = definedValues(parseCliConfig(parsed.values));
+
+  if (repo) {
+    rejectRepositoryModeCommandFlags(parsed.values);
+    if (parsed.positionals.length === 0) {
+      throw new UsageError("missing question");
+    }
+
+    return {
+      kind: "run",
+      mode: "repo",
+      repo,
+      repoRef,
+      question: parsed.positionals.join(" "),
+      config: mergeConfig({
+        ...baseConfig,
+        ...cliConfig,
+      }),
+    };
+  }
+
+  if (repoRef) {
+    throw new UsageError("--repo-ref requires --repo");
+  }
+
   if (!command) {
     throw new UsageError("missing command");
   }
@@ -75,9 +115,9 @@ export function parseInvocation(argv: string[], baseConfig: CliConfig): Invocati
     throw new UsageError("missing question");
   }
 
-  const cliConfig = definedValues(parseCliConfig(parsed.values));
   return {
     kind: "run",
+    mode: "command",
     command,
     question: questionParts.join(" "),
     config: mergeConfig({
@@ -85,6 +125,24 @@ export function parseInvocation(argv: string[], baseConfig: CliConfig): Invocati
       ...cliConfig,
     }),
   };
+}
+
+function rejectRepositoryModeCommandFlags(values: Record<string, string | boolean | undefined>): void {
+  const commandOnlyFlags = [
+    "ecosystem",
+    "package-root",
+    "executable",
+    "no-exec",
+    "allow-help-exec",
+    "max-files",
+    "max-bytes",
+  ] as const;
+
+  for (const flag of commandOnlyFlags) {
+    if (values[flag] !== undefined) {
+      throw new UsageError(`--${flag} is only supported for command questions`);
+    }
+  }
 }
 
 function parseCliConfig(values: Record<string, string | boolean | undefined>): Partial<CliConfig> {

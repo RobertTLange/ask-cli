@@ -83,6 +83,55 @@ test("parses documented flags and joins question words", () => {
   assert.equal(invocation.config.executable, "/tmp/bin/tool");
 });
 
+test("parses GitHub repository question mode", () => {
+  const invocation = parseInvocation(
+    [
+      "--agent",
+      "none",
+      "--repo",
+      "RobertTLange/ask-cli",
+      "--repo-ref",
+      "main",
+      "--json",
+      "how",
+      "is",
+      "context",
+      "built?",
+    ],
+    { ...defaultConfig },
+  );
+
+  assert.equal(invocation.kind, "run");
+  assert.equal(invocation.mode, "repo");
+  assert.equal(invocation.repo, "RobertTLange/ask-cli");
+  assert.equal(invocation.repoRef, "main");
+  assert.equal(invocation.question, "how is context built?");
+  assert.equal(invocation.config.agent, "none");
+  assert.equal(invocation.config.json, true);
+});
+
+test("rejects repository ref without repository mode", () => {
+  assert.throws(
+    () => parseInvocation(["--repo-ref", "main", "tool", "question"], { ...defaultConfig }),
+    /--repo-ref requires --repo/,
+  );
+});
+
+test("rejects command resolver flags in repository mode", () => {
+  assert.throws(
+    () => parseInvocation(["--repo", "RobertTLange/ask-cli", "--package-root", "/tmp/pkg", "question"], { ...defaultConfig }),
+    /--package-root is only supported for command questions/,
+  );
+});
+
+test("maps unsupported repository input to a resolution error", async () => {
+  const result = await run(["--agent", "none", "--repo", "https://example.com/owner/repo", "question"]);
+
+  assert.equal(result.exitCode, exitCodes.resolution);
+  assert.match(result.stderr, /Resolution error: unsupported GitHub repository input/);
+  assert.match(result.stderr, /Attempted: validate repository/);
+});
+
 test("CLI flags override config defaults", () => {
   const invocation = parseInvocation(
     ["--agent", "none", "--max-files", "20", "tool", "question"],

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Added `ask --repo` for answering questions about GitHub repositories from a cached, read-only checked-out worktree.
+
 ## 0.1.1 - 2026-05-04
 
 ### Changed

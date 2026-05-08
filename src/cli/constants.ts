@@ -33,6 +33,7 @@ export const defaultConfig = {
 } as const;
 
 export const helpText = `ask <command> <question>
+ask --repo <owner/name|github-url> [--repo-ref <ref>] <question>
 
 Positional:
   command                       CLI to ask about
@@ -42,6 +43,8 @@ Selection:
   --ecosystem <e>               python|npm|cargo|homebrew|fallback|auto (default: auto)
   --package-root <path>         override resolver; use this directory as package root
   --executable <path>           override located executable
+  --repo <repo>                 ask about a GitHub repository instead of a command
+  --repo-ref <ref>              branch, tag, or commit for --repo (default: remote HEAD)
 
 Execution control:
   --no-exec                     do not run any subprocesses during collection
