@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import { tmpdir } from "node:os";
@@ -86,6 +86,41 @@ test("checkoutGitRepository caches a bare clone and creates a read-only full wor
   } finally {
     await result.cleanup();
   }
+});
+
+test("checkoutGitRepository does not chmod symlink targets outside the workspace", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-github-repo-symlink-"));
+  const source = join(temp, "source");
+  const outside = join(temp, "outside");
+  const cacheRoot = join(temp, "cache");
+  await mkdir(source);
+  await mkdir(outside);
+  await writeFile(join(outside, "secret.txt"), "secret\n");
+  await chmod(join(outside, "secret.txt"), 0o600);
+  await git(["init", "-b", "main"], source);
+  await git(["config", "user.email", "test@example.com"], source);
+  await git(["config", "user.name", "Test User"], source);
+  await symlink(outside, join(source, "escape"));
+  await git(["add", "escape"], source);
+  await git(["commit", "-m", "symlink"], source);
+
+  const result = await checkoutGitRepository({
+    repository: {
+      input: "local/repo",
+      owner: "local",
+      name: "repo",
+      slug: "local/repo",
+      remoteUrl: source,
+    },
+    question: "Does checkout follow symlinks?",
+    ref: "main",
+    cacheRoot,
+    refresh: false,
+  });
+
+  await result.cleanup();
+
+  assert.equal((await stat(join(outside, "secret.txt"))).mode & 0o777, 0o600);
 });
 
 async function git(args, cwd) {

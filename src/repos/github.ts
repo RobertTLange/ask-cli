@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { defaultCacheRoot } from "../cache/store.js";
@@ -316,9 +316,13 @@ function run(command: string, args: readonly string[], timeoutMs: number): Promi
 }
 
 async function chmodReadOnly(path: string): Promise<void> {
-  const fileStat = await stat(path);
+  const fileStat = await lstat(path);
+  if (fileStat.isSymbolicLink()) {
+    return;
+  }
+
   if (fileStat.isDirectory()) {
-    const entries = await import("node:fs/promises").then((fs) => fs.readdir(path, { withFileTypes: true }));
+    const entries = await readdir(path, { withFileTypes: true });
     for (const entry of entries) {
       await chmodReadOnly(join(path, entry.name));
     }
@@ -330,10 +334,14 @@ async function chmodReadOnly(path: string): Promise<void> {
 }
 
 async function chmodWritable(path: string): Promise<void> {
-  const fileStat = await stat(path);
+  const fileStat = await lstat(path);
+  if (fileStat.isSymbolicLink()) {
+    return;
+  }
+
   if (fileStat.isDirectory()) {
     await chmod(path, 0o755);
-    const entries = await import("node:fs/promises").then((fs) => fs.readdir(path, { withFileTypes: true }));
+    const entries = await readdir(path, { withFileTypes: true });
     for (const entry of entries) {
       await chmodWritable(join(path, entry.name));
     }
