@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { readdir } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 
@@ -17,12 +18,19 @@ if (filters.length > 0) {
 }
 args.push(...testFiles);
 
+const testHome = await mkdtemp(join(tmpdir(), "ask-test-home-"));
 const child = spawn(process.execPath, args, {
+  env: {
+    ...process.env,
+    HOME: testHome,
+    XDG_CACHE_HOME: join(testHome, ".cache"),
+  },
   stdio: "inherit",
   shell: false,
 });
 
-child.on("exit", (code, signal) => {
+child.on("exit", async (code, signal) => {
+  await rm(testHome, { force: true, recursive: true }).catch(() => {});
   if (signal) {
     process.kill(process.pid, signal);
     return;

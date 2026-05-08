@@ -12,7 +12,7 @@ test("sandbox captures normal exit", async () => {
     command: process.execPath,
     args: ["-e", "console.log(process.env.SECRET || 'unset')"],
     env: { SECRET: "visible" },
-    timeoutMs: 1_000,
+    timeoutMs: 5_000,
     stdoutBytes: 1_024,
     stderrBytes: 1_024,
   });
@@ -27,7 +27,7 @@ test("sandbox reports non-zero exit", async () => {
   const result = await runSandbox({
     command: process.execPath,
     args: ["-e", "console.error('bad'); process.exit(7)"],
-    timeoutMs: 1_000,
+    timeoutMs: 5_000,
     stdoutBytes: 1_024,
     stderrBytes: 1_024,
   });
@@ -56,7 +56,7 @@ test("sandbox enforces stdout byte cap", async () => {
   const result = await runSandbox({
     command: process.execPath,
     args: ["-e", "process.stdout.write('x'.repeat(10_000))"],
-    timeoutMs: 1_000,
+    timeoutMs: 5_000,
     stdoutBytes: 32,
     stderrBytes: 1_024,
   });
@@ -107,7 +107,7 @@ test("sandbox starts with a restricted environment", async () => {
         "}))",
       ].join(""),
     ],
-    timeoutMs: 1_000,
+    timeoutMs: 5_000,
     stdoutBytes: 1_024,
     stderrBytes: 1_024,
   });

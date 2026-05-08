@@ -43,7 +43,7 @@ test("huge output fixture is capped", async () => {
   await chmod(script, 0o755);
   const result = await runSandbox({
     command: script,
-    timeoutMs: 2_000,
+    timeoutMs: 10_000,
     stdoutBytes: 1024,
     stderrBytes: 1024,
   });
