@@ -12,6 +12,7 @@
   <img alt="Node.js 20.11+" src="https://img.shields.io/badge/Node.js-20.11%2B-339933?logo=node.js&logoColor=white" />
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-ESM-3178C6?logo=typescript&logoColor=white" />
   <img alt="npm package" src="https://img.shields.io/badge/npm-%40roberttlange%2Fask-CB3837?logo=npm&logoColor=white" />
+  <a href="https://roberttlange.com/blog/06-ask-cli"><img alt="Blog post" src="https://img.shields.io/badge/blog-ask--cli-0A66C2?logo=rss&logoColor=white" /></a>
 </p>
 
 `ask` resolves a CLI command to the package that installed it, stages a small read-only context bundle, and asks a coding agent to answer from that bundle. It is built for the moments where `tool --help` is not enough and generic web answers are too far away from the version installed on your machine. By default, `ask` runs Headless with the first available supported agent. Pass `--agent none` to inspect the resolved context without calling an agent.
@@ -194,18 +195,6 @@ By default, `ask` runs Headless through `npx -y @roberttlange/headless`. Set `ag
 `ask` treats package source, README files, tests, docs, metadata, and help output as untrusted data. Subprocess collection uses an allow-list, closed stdin, `shell: false`, restricted environment, byte caps, timeouts, and process-group cleanup.
 
 Staged workspaces copy files instead of symlinking them, redact common secrets, and chmod staged files read-only. The default Headless adapter runs with `--allow read-only`. Use `--agent none` to inspect the staged context without running any agent.
-
-## Exit Codes
-
-| Code | Meaning |
-| --- | --- |
-| `0` | success |
-| `1` | usage error |
-| `2` | resolution failed |
-| `3` | context collection failed |
-| `4` | agent failed |
-| `5` | config error |
-| `130` | interrupted |
 
 ## Development
 

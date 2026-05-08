@@ -2,9 +2,20 @@
 
 ## Unreleased
 
+## 0.1.2 - 2026-05-08
+
 ### Added
 
 - Added `ask --repo` for answering questions about GitHub repositories from a cached, read-only checked-out worktree.
+
+### Fixed
+
+- Avoided chmod traversal through repository symlinks while preparing read-only repo worktrees.
+- Mapped invalid repository input errors to usage errors.
+
+### Documentation
+
+- Added a README badge linking to the companion ask-cli blog post.
 
 ## 0.1.1 - 2026-05-04
 
