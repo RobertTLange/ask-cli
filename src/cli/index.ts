@@ -424,11 +424,12 @@ function headlessBackend(agent: ParsedInvocation["config"]["agent"]): HeadlessBa
 }
 
 async function progressLabel(invocation: RunInvocation): Promise<string> {
-  if (invocation.config.agent !== "auto") {
+  const backend = headlessBackend(invocation.config.agent);
+  if (invocation.config.agent === "none") {
     return progressLabelFromConfig(invocation);
   }
 
-  const resolved = await resolveHeadlessAutoIdentity(invocation);
+  const resolved = await resolveHeadlessIdentity(invocation, backend);
   return progressLabelFromParts({
     agent: resolved.agent ?? invocation.config.agent,
     model: resolved.model ?? headlessModel(invocation.config.headlessExtraFlags),
@@ -456,7 +457,7 @@ function progressLabelFromParts(parts: {
   ].map(sanitizeProgressLabelPart).join("-")}]`;
 }
 
-async function resolveHeadlessAutoIdentity(invocation: RunInvocation): Promise<{
+async function resolveHeadlessIdentity(invocation: RunInvocation, backend: HeadlessBackend | undefined): Promise<{
   readonly agent?: string;
   readonly model?: string;
   readonly reasoningEffort?: string;
@@ -465,6 +466,7 @@ async function resolveHeadlessAutoIdentity(invocation: RunInvocation): Promise<{
   const command = invocation.config.headlessPath || "npx";
   const args = [
     ...(usesNpx ? ["-y", "@roberttlange/headless"] : []),
+    ...(backend ? [backend] : []),
     "--print-command",
     ...(invocation.config.reasoningEffort ? ["--reasoning-effort", invocation.config.reasoningEffort] : []),
     "--allow",
@@ -522,11 +524,12 @@ function parseHeadlessPrintCommand(command: string): {
 } {
   const agentMatch = command.match(/(?:^|\|\s*)(codex|claude|cursor|gemini|opencode|pi)\b/);
   const modelMatch = command.match(/(?:^|\s)--model(?:=|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))/);
-  const reasoningMatch = command.match(/model_reasoning_effort\s*=\s*\\?["']?([A-Za-z0-9_-]+)/);
+  const reasoningMatch = command.match(/model_reasoning_effort\s*=\s*\\?["']?([A-Za-z0-9_-]+)/)
+    ?? command.match(/(?:^|\s)(?:--reasoning-effort|--effort|--thinking)(?:=|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))/);
   return {
     agent: agentMatch?.[1],
     model: modelMatch?.[1] ?? modelMatch?.[2] ?? modelMatch?.[3],
-    reasoningEffort: reasoningMatch?.[1],
+    reasoningEffort: reasoningMatch?.[1] ?? reasoningMatch?.[2] ?? reasoningMatch?.[3],
   };
 }
 

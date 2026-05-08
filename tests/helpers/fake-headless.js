@@ -25,15 +25,6 @@ writeFileSync(process.env.ASK_NPX_CAPTURE, JSON.stringify({
 if (process.env.ASK_NPX_STDERR) {
   process.stderr.write(process.env.ASK_NPX_STDERR);
 }
-if (process.env.ASK_NPX_GRANDCHILD_MARKER) {
-  const child = spawn(process.execPath, [
-    "-e",
-    "setTimeout(() => require('node:fs').writeFileSync(process.env.ASK_NPX_GRANDCHILD_MARKER, 'alive'), Number(process.env.ASK_NPX_GRANDCHILD_DELAY_MS || '1500'))",
-  ], { env: process.env, stdio: "ignore" });
-  child.unref();
-}
-const stdoutChunks = process.env.ASK_NPX_STDOUT_CHUNKS ? JSON.parse(process.env.ASK_NPX_STDOUT_CHUNKS) : null;
-const stdoutText = process.env.ASK_NPX_STDOUT || "{\\"type\\":\\"agent_message\\",\\"text\\":\\"headless answer\\"}\\n";
 const exitCode = Number(process.env.ASK_NPX_EXIT || "0");
 const sleepMs = Number(process.env.ASK_NPX_SLEEP_MS || "0");
 if (argv.includes("--print-command")) {
@@ -46,29 +37,39 @@ if (argv.includes("--print-command")) {
   } else {
     finishPrintCommand();
   }
-}
-if (stdoutChunks) {
-  let index = 0;
-  const writeNext = () => {
-    if (index >= stdoutChunks.length) {
-      if (sleepMs > 0) {
-        setTimeout(() => process.exit(exitCode), sleepMs);
-      } else {
-        process.exit(exitCode);
-      }
-      return;
-    }
-    process.stdout.write(stdoutChunks[index]);
-    index += 1;
-    setTimeout(writeNext, 20);
-  };
-  writeNext();
 } else {
-  process.stdout.write(stdoutText);
-  if (sleepMs > 0) {
-    setTimeout(() => process.exit(exitCode), sleepMs);
+  if (process.env.ASK_NPX_GRANDCHILD_MARKER) {
+    const child = spawn(process.execPath, [
+      "-e",
+      "setTimeout(() => require('node:fs').writeFileSync(process.env.ASK_NPX_GRANDCHILD_MARKER, 'alive'), Number(process.env.ASK_NPX_GRANDCHILD_DELAY_MS || '1500'))",
+    ], { env: process.env, stdio: "ignore" });
+    child.unref();
+  }
+  const stdoutChunks = process.env.ASK_NPX_STDOUT_CHUNKS ? JSON.parse(process.env.ASK_NPX_STDOUT_CHUNKS) : null;
+  const stdoutText = process.env.ASK_NPX_STDOUT || "{\\"type\\":\\"agent_message\\",\\"text\\":\\"headless answer\\"}\\n";
+  if (stdoutChunks) {
+    let index = 0;
+    const writeNext = () => {
+      if (index >= stdoutChunks.length) {
+        if (sleepMs > 0) {
+          setTimeout(() => process.exit(exitCode), sleepMs);
+        } else {
+          process.exit(exitCode);
+        }
+        return;
+      }
+      process.stdout.write(stdoutChunks[index]);
+      index += 1;
+      setTimeout(writeNext, 20);
+    };
+    writeNext();
   } else {
-    process.exit(exitCode);
+    process.stdout.write(stdoutText);
+    if (sleepMs > 0) {
+      setTimeout(() => process.exit(exitCode), sleepMs);
+    } else {
+      process.exit(exitCode);
+    }
   }
 }
 `);

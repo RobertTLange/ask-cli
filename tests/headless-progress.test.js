@@ -96,10 +96,32 @@ test("Headless progress label includes agent model and reasoning", async () => {
 
     assert.equal(result.exitCode, 0);
   }, {
+    printCommand: "/Users/rob/.local/bin/claude --model claude-opus-4-6 -p identity --output-format stream-json --verbose --effort high",
     stdout: jsonl([{ type: "agent_message", text: "headless answer" }]),
   });
 
-  assert.match(diagnostics.join(""), /ask\[claude-sonnet-high\]: agent started/);
+  assert.match(diagnostics.join(""), /ask\[claude-claude-opus-4-6-high\]: agent started/);
+});
+
+test("Headless progress label resolves explicit Pi model and thinking effort", async () => {
+  const diagnostics = [];
+  await withFakeNpx(async () => {
+    const result = await run([
+      "--agent",
+      "pi",
+      "--reasoning-effort",
+      "high",
+      "fixture-cli-npm",
+      "How do I enable json output?",
+    ], (text) => diagnostics.push(text));
+
+    assert.equal(result.exitCode, 0);
+  }, {
+    printCommand: "pi --no-session --mode json --provider openai-codex --model gpt-5.5 --thinking high --tools 'read,grep,find,ls' identity",
+    stdout: jsonl([{ type: "agent_message", text: "headless answer" }]),
+  });
+
+  assert.match(diagnostics.join(""), /ask\[pi-gpt-5.5-high\]: agent started/);
 });
 
 test("Headless progress label resolves auto agent through print command", async () => {

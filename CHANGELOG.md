@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Resolved Headless progress labels for explicit agents so model and reasoning details are shown when Headless reports them.
+
 ## 0.1.2 - 2026-05-08
 
 ### Added
