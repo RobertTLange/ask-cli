@@ -1,5 +1,5 @@
 export const packageName = "@roberttlange/ask";
-export const packageVersion = "0.1.1";
+export const packageVersion = "0.1.2";
 
 export const exitCodes = {
   success: 0,
