@@ -101,6 +101,35 @@ test("collector includes dist entrypoint and local imports", async () => {
   assertCollectedRelPath(bundle, "dist/pricing-launch.js");
 });
 
+test("collector includes package skill markdown as docs", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-collector-skills-"));
+  const skillsDir = join(temp, "skills", "review");
+  await mkdir(skillsDir, { recursive: true });
+  const executable = join(temp, "tool");
+  await writeFile(executable, "#!/bin/sh\n");
+  await chmod(executable, 0o755);
+  await writeFile(join(temp, "package.json"), JSON.stringify({ name: "tool", version: "1.0.0" }));
+  await writeFile(join(skillsDir, "SKILL.md"), "Review instructions\n");
+
+  const bundle = await collectContext({
+    command: "tool",
+    executablePath: executable,
+    executableRealPath: executable,
+    executableMtimeNs: 1n,
+    ecosystem: "npm",
+    packageName: "tool",
+    version: "1.0.0",
+    packageRoot: temp,
+    entryFile: executable,
+    metadataFiles: [],
+    confidence: "high",
+    warnings: [],
+    shim: null,
+  }, defaultLimits, { noExec: true });
+
+  assertCollectedRelPath(bundle, "skills/review/SKILL.md");
+});
+
 test("collector skips generated directories and package artifacts", async () => {
   const temp = await mkdtemp(join(tmpdir(), "ask-collector-generated-"));
   const src = join(temp, "src");

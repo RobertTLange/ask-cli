@@ -12,6 +12,7 @@
 ### Changed
 
 - Show a transient startup spinner before the first progress log while agent identity details are being resolved.
+- Include bundled package skill markdown in staged docs context.
 
 ## 0.1.2 - 2026-05-08
 

@@ -316,7 +316,11 @@ function classifyFile(
     return "config";
   }
 
-  if (normalizedRelPath.startsWith(`docs/`) || normalizedRelPath.startsWith(`doc/`)) {
+  if (
+    normalizedRelPath.startsWith(`docs/`)
+    || normalizedRelPath.startsWith(`doc/`)
+    || normalizedRelPath.startsWith(`skills/`)
+  ) {
     return "docs";
   }
 
