@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { run } from "../dist/cli/index.js";
-import { ProgressFormatter, shouldColorProgress } from "../dist/cli/progress.js";
+import { ProgressFormatter, ProgressSpinner, shouldColorProgress, shouldSpinProgress } from "../dist/cli/progress.js";
 import { extractToolProgressEvents, HeadlessJsonStream } from "../dist/agents/headless-json.js";
 import { eventually, jsonl, withEnv, withFakeNpx } from "./helpers/fake-headless.js";
 
@@ -37,6 +37,27 @@ test("progress color follows TTY and environment gates", async () => {
     });
     assert.match(formatter.format("agent started"), /\x1b\[/);
   });
+});
+
+test("progress spinner writes a transient pre-log frame and clears it", () => {
+  const writes = [];
+  const spinner = new ProgressSpinner({
+    emit: (text) => writes.push(text),
+    enabled: true,
+    intervalMs: 10_000,
+  });
+
+  spinner.start();
+  spinner.stop();
+
+  assert.equal(writes[0], "\rask: preparing |");
+  assert.equal(writes.at(-1), "\r\x1b[2K");
+});
+
+test("progress spinner follows TTY and environment gates", () => {
+  assert.equal(shouldSpinProgress({ isTTY: false }, {}), false);
+  assert.equal(shouldSpinProgress({ isTTY: true }, {}), true);
+  assert.equal(shouldSpinProgress({ isTTY: true }, { ASK_NO_SPINNER: "1" }), false);
 });
 
 test("Headless progress diagnostics stream before completion", async () => {

@@ -7,6 +7,10 @@
 - Resolved Headless progress labels for explicit agents so model and reasoning details are shown when Headless reports them.
 - Allowed slower Headless auto identity probes to finish before falling back to default progress-label fields.
 
+### Changed
+
+- Show a transient startup spinner before the first progress log while agent identity details are being resolved.
+
 ## 0.1.2 - 2026-05-08
 
 ### Added

@@ -10,11 +10,15 @@ interface StderrLike {
   readonly isTTY?: boolean;
 }
 
+type ProgressWriter = (text: string) => void;
+
 const ansi = {
   cyan: "\x1b[36m",
   dim: "\x1b[2m",
   reset: "\x1b[0m",
 };
+
+const spinnerFrames = ["|", "/", "-", "\\"];
 
 export class ProgressFormatter {
   private readonly label: string;
@@ -57,6 +61,68 @@ export function shouldColorProgress(
   }
 
   return Boolean(stderr.isTTY);
+}
+
+export function shouldSpinProgress(
+  stderr: StderrLike = process.stderr,
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  return Boolean(stderr.isTTY) && env.ASK_NO_SPINNER === undefined;
+}
+
+export class ProgressSpinner {
+  private readonly emit: ProgressWriter;
+  private readonly label: string;
+  private readonly message: string;
+  private readonly intervalMs: number;
+  private readonly enabled: boolean;
+  private frameIndex = 0;
+  private timer: NodeJS.Timeout | undefined;
+  private active = false;
+
+  constructor(options: {
+    readonly emit: ProgressWriter;
+    readonly label?: string;
+    readonly message?: string;
+    readonly intervalMs?: number;
+    readonly enabled?: boolean;
+  }) {
+    this.emit = options.emit;
+    this.label = options.label ?? "ask";
+    this.message = options.message ?? "preparing";
+    this.intervalMs = options.intervalMs ?? 120;
+    this.enabled = options.enabled ?? shouldSpinProgress(process.stderr, process.env);
+  }
+
+  start(): void {
+    if (!this.enabled || this.active) {
+      return;
+    }
+
+    this.active = true;
+    this.render();
+    this.timer = setInterval(() => this.render(), this.intervalMs);
+    this.timer.unref();
+  }
+
+  stop(): void {
+    if (!this.active) {
+      return;
+    }
+
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = undefined;
+    }
+    this.active = false;
+    this.emit("\r\x1b[2K");
+  }
+
+  private render(): void {
+    const frame = spinnerFrames[this.frameIndex % spinnerFrames.length];
+    this.frameIndex += 1;
+    this.emit(`\r${this.label}: ${this.message} ${frame}`);
+  }
 }
 
 function formatClockTime(date: Date): string {

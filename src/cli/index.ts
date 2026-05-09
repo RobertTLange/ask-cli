@@ -8,7 +8,7 @@ import { parseInvocation, UsageError, type ParsedInvocation, type ParsedReposito
 import { cacheOptionsForInvocation } from "./cache-options.js";
 import { collectContext } from "../collectors/context.js";
 import { defaultLimits } from "../collectors/limits.js";
-import { ProgressFormatter } from "./progress.js";
+import { ProgressFormatter, ProgressSpinner, shouldSpinProgress } from "./progress.js";
 import { applyPackageRootOverride } from "./resolution-overrides.js";
 import { buildUncertainty, formatUncertaintyBlock } from "./uncertainty.js";
 import { AgentError, HeadlessAgent, type HeadlessBackend } from "../agents/headless.js";
@@ -117,10 +117,7 @@ async function runCommandQuestion(
 ): Promise<RunResult> {
   const trace = new Trace();
   const headlessProgressEnabled = invocation.config.agent !== "none" && !invocation.config.debug;
-  const progress = new ProgressFormatter({
-    label: headlessProgressEnabled ? await progressLabel(invocation) : progressLabelFromConfig(invocation),
-  });
-  const emitProgress = (message: string): void => emitDiagnostic(progress.format(message));
+  const { progress, emitProgress } = await createProgressReporter(invocation, emitDiagnostic, headlessProgressEnabled);
   if (headlessProgressEnabled) {
     emitProgress(`resolving ${invocation.command}`);
   }
@@ -283,10 +280,7 @@ async function runRepositoryQuestion(
 ): Promise<RunResult> {
   const trace = new Trace();
   const headlessProgressEnabled = invocation.config.agent !== "none" && !invocation.config.debug;
-  const progress = new ProgressFormatter({
-    label: headlessProgressEnabled ? await progressLabel(invocation) : progressLabelFromConfig(invocation),
-  });
-  const emitProgress = (message: string): void => emitDiagnostic(progress.format(message));
+  const { progress, emitProgress } = await createProgressReporter(invocation, emitDiagnostic, headlessProgressEnabled);
   if (headlessProgressEnabled) {
     emitProgress(`resolving repository ${invocation.repo}`);
   }
@@ -413,6 +407,48 @@ async function runRepositoryQuestion(
 
     throw error;
   }
+}
+
+async function createProgressReporter(
+  invocation: RunInvocation,
+  emitDiagnostic: DiagnosticWriter,
+  headlessProgressEnabled: boolean,
+): Promise<{
+  readonly progress: ProgressFormatter;
+  readonly emitProgress: (message: string) => void;
+}> {
+  const spinner = new ProgressSpinner({
+    emit: emitDiagnostic,
+    enabled: headlessProgressEnabled && shouldSpinProgress(),
+  });
+  spinner.start();
+
+  let label: string;
+  try {
+    label = headlessProgressEnabled ? await progressLabel(invocation) : progressLabelFromConfig(invocation);
+  } catch (error) {
+    spinner.stop();
+    throw error;
+  }
+
+  const progress = new ProgressFormatter({ label });
+  let spinnerStopped = false;
+  const stopSpinner = (): void => {
+    if (spinnerStopped) {
+      return;
+    }
+
+    spinner.stop();
+    spinnerStopped = true;
+  };
+
+  return {
+    progress,
+    emitProgress(message: string): void {
+      stopSpinner();
+      emitDiagnostic(progress.format(message));
+    },
+  };
 }
 
 function headlessBackend(agent: ParsedInvocation["config"]["agent"]): HeadlessBackend | undefined {
