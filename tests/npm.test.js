@@ -55,6 +55,45 @@ test("npm resolver falls back to package root inside node_modules", async () => 
   assert.match(resolution.warnings[0], /No exact package\.json bin match/);
 });
 
+test("npm resolver prefers parent package for platform optional binaries", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "ask-npm-platform-"));
+  const modulesRoot = join(temp, "node_modules");
+  const packageRoot = join(modulesRoot, "host-tool");
+  const packageBin = join(packageRoot, "bin");
+  const platformRoot = join(modulesRoot, "host-tool-darwin-arm64");
+  const platformBin = join(platformRoot, "bin");
+  await mkdir(packageBin, { recursive: true });
+  await mkdir(platformBin, { recursive: true });
+  const wrapper = join(packageBin, "host.cjs");
+  const nativeBinary = join(platformBin, "host");
+  await writeFile(join(packageRoot, "package.json"), JSON.stringify({
+    name: "host-tool",
+    version: "3.2.1",
+    bin: { host: "bin/host.cjs" },
+    optionalDependencies: {
+      "host-tool-darwin-arm64": "3.2.1",
+    },
+  }));
+  await writeFile(join(platformRoot, "package.json"), JSON.stringify({
+    name: "host-tool-darwin-arm64",
+    version: "3.2.1",
+    bin: { host: "bin/host" },
+  }));
+  await writeFile(wrapper, "#!/usr/bin/env node\nconsole.log('wrapper')\n");
+  await chmod(wrapper, 0o755);
+  await writeFile(nativeBinary, Buffer.from([0xcf, 0xfa, 0xed, 0xfe]));
+  await chmod(nativeBinary, 0o755);
+
+  const located = await locateExecutable(nativeBinary, { env: { PATH: "", SHELL: "/missing-shell" } });
+  const resolution = await resolveNpmPackage({ ...located, command: "host" });
+
+  assert.equal(resolution.packageName, "host-tool");
+  assert.equal(resolution.version, "3.2.1");
+  assert.equal(resolution.packageRoot, await realpath(packageRoot));
+  assert.equal(resolution.entryFile, await realpath(wrapper));
+  assert.deepEqual(resolution.warnings, []);
+});
+
 test("npm resolver follows local shell wrapper shims to package metadata", async () => {
   const temp = await mkdtemp(join(tmpdir(), "ask-npm-wrapper-"));
   const binDir = join(temp, "node_modules", ".bin");

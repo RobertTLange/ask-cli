@@ -1,5 +1,5 @@
-import { readFile, realpath, stat } from "node:fs/promises";
-import { dirname, join, parse } from "node:path";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import { basename, dirname, join, parse } from "node:path";
 import type { LocatedExecutable, Resolution } from "../types.js";
 import { resolveLocalWrapperTarget } from "./wrappers.js";
 
@@ -7,6 +7,7 @@ interface PackageJson {
   readonly name?: unknown;
   readonly version?: unknown;
   readonly bin?: unknown;
+  readonly optionalDependencies?: unknown;
 }
 
 export async function resolveNpmPackage(located: LocatedExecutable): Promise<Resolution> {
@@ -17,6 +18,11 @@ export async function resolveNpmPackage(located: LocatedExecutable): Promise<Res
 
   const exact = await resolveByPackageJsonBin(located);
   if (exact) {
+    const platformOwner = await resolveOptionalPlatformOwner(located, exact);
+    if (platformOwner) {
+      return platformOwner;
+    }
+
     return exact;
   }
 
@@ -26,6 +32,114 @@ export async function resolveNpmPackage(located: LocatedExecutable): Promise<Res
   }
 
   return unresolvedNpmResolution(located, ["npm package metadata was not found"]);
+}
+
+async function resolveOptionalPlatformOwner(
+  located: LocatedExecutable,
+  platformResolution: Resolution,
+): Promise<Resolution | null> {
+  if (located.executableKind === "script") {
+    return null;
+  }
+
+  if (!platformResolution.packageRoot || !platformResolution.packageName || !platformResolution.version) {
+    return null;
+  }
+
+  for (const ownerRoot of await optionalOwnerCandidates(platformResolution.packageRoot)) {
+    const packageJson = await readPackageJson(join(ownerRoot, "package.json"));
+    if (!packageJson || !declaresOptionalDependency(packageJson, platformResolution.packageName, platformResolution.version)) {
+      continue;
+    }
+
+    for (const [binName, binTarget] of normalizeBinEntries(packageJson)) {
+      if (binName !== located.command) {
+        continue;
+      }
+
+      const targetPath = await realpath(join(ownerRoot, binTarget)).catch(() => null);
+      if (!targetPath) {
+        continue;
+      }
+
+      return resolutionFromPackage(
+        located,
+        packageJson,
+        ownerRoot,
+        targetPath,
+        "high",
+        [],
+      );
+    }
+  }
+
+  return null;
+}
+
+async function optionalOwnerCandidates(platformRoot: string): Promise<readonly string[]> {
+  const candidates = new Set<string>();
+  const modulesRoot = dirname(platformRoot);
+  if (basename(modulesRoot) !== "node_modules") {
+    return [];
+  }
+
+  candidates.add(dirname(modulesRoot));
+
+  for (const packageRoot of await packageRootsInNodeModules(modulesRoot)) {
+    if (packageRoot !== platformRoot) {
+      candidates.add(packageRoot);
+    }
+  }
+
+  return [...candidates];
+}
+
+async function packageRootsInNodeModules(modulesRoot: string): Promise<readonly string[]> {
+  let entries;
+  try {
+    entries = await readdir(modulesRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const packageRoots: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+
+    const path = join(modulesRoot, entry.name);
+    if (entry.name.startsWith("@")) {
+      packageRoots.push(...await scopedPackageRoots(path));
+      continue;
+    }
+
+    packageRoots.push(path);
+  }
+
+  return packageRoots;
+}
+
+async function scopedPackageRoots(scopeRoot: string): Promise<readonly string[]> {
+  let entries;
+  try {
+    entries = await readdir(scopeRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  return entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => join(scopeRoot, entry.name));
+}
+
+function declaresOptionalDependency(packageJson: PackageJson, name: string, version: string): boolean {
+  if (!isRecord(packageJson.optionalDependencies)) {
+    return false;
+  }
+
+  const requested = packageJson.optionalDependencies[name];
+  return typeof requested === "string" && requested.includes(version);
 }
 
 async function resolveThroughWrapper(located: LocatedExecutable): Promise<Resolution | null> {

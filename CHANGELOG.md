@@ -7,6 +7,7 @@
 - Resolved Headless progress labels for explicit agents so model and reasoning details are shown when Headless reports them.
 - Allowed slower Headless auto identity probes to finish before falling back to default progress-label fields.
 - Detected native npm package binaries installed under package directories in `node_modules`, avoiding fallback context for tools like `hunk`.
+- Resolved npm platform optional binaries through their parent package when available, so tools like `hunk` collect README and wrapper context instead of native binary blobs.
 
 ### Changed
 
