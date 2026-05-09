@@ -32,6 +32,10 @@ export function detectEcosystem(
     return { ecosystem: "npm", ruleMatched: "path:node-bin" };
   }
 
+  if (isInsideNodeModulesPackage(executableDir)) {
+    return { ecosystem: "npm", ruleMatched: "path:node-modules" };
+  }
+
   if (isInsideCargoBin(executableDir)) {
     return { ecosystem: "cargo", ruleMatched: "path:cargo-bin" };
   }
@@ -65,6 +69,17 @@ function isInsidePythonPackages(path: string): boolean {
 
 function isInsideNodeBin(path: string): boolean {
   return path.includes(`${sep}node_modules${sep}.bin`);
+}
+
+function isInsideNodeModulesPackage(path: string): boolean {
+  const parts = path.split(sep);
+  const nodeModulesIndex = parts.lastIndexOf("node_modules");
+  if (nodeModulesIndex === -1 || nodeModulesIndex + 1 >= parts.length) {
+    return false;
+  }
+
+  const packagePart = parts[nodeModulesIndex + 1];
+  return packagePart !== ".bin" && packagePart !== "";
 }
 
 function isInsideNvm(path: string): boolean {

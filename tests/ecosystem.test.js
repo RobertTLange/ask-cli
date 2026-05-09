@@ -42,6 +42,15 @@ test("ecosystem detects npm bin paths", () => {
   assert.equal(decision.ruleMatched, "path:node-bin");
 });
 
+test("ecosystem detects native npm package bin paths", () => {
+  const decision = detectEcosystem(located({
+    realPath: "/Users/rob/.local/lib/node_modules/hunkdiff-darwin-arm64/bin/hunk",
+  }));
+
+  assert.equal(decision.ecosystem, "npm");
+  assert.equal(decision.ruleMatched, "path:node-modules");
+});
+
 test("ecosystem detects cargo and homebrew paths", () => {
   assert.equal(
     detectEcosystem(located({ realPath: "/Users/rob/.cargo/bin/tool" })).ecosystem,
