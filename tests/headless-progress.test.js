@@ -156,7 +156,7 @@ test("Headless progress label tolerates slower npx print-command startup", async
     assert.equal(result.exitCode, 0);
   }, {
     printCommand: "printf %s prompt | codex --model gpt-5.5 --json -",
-    sleepMs: 2_500,
+    sleepMs: 5_000,
     stdout: jsonl([{ type: "agent_message", text: "headless answer" }]),
   });
 

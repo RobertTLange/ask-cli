@@ -5,6 +5,7 @@
 ### Fixed
 
 - Resolved Headless progress labels for explicit agents so model and reasoning details are shown when Headless reports them.
+- Allowed slower Headless auto identity probes to finish before falling back to default progress-label fields.
 
 ## 0.1.2 - 2026-05-08
 
