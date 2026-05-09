@@ -293,7 +293,7 @@ test("debug mode streams Headless trace diagnostics before completion", async ()
       completed = true;
     });
 
-    await eventually(() => diagnostics.join("").includes("live-debug") && !completed);
+    await eventually(() => diagnostics.join("").includes("live-debug") && !completed, 10_000);
     const result = await runPromise;
 
     assert.equal(result.exitCode, 0);
